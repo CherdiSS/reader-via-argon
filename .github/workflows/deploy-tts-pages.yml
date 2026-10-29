@@ -80,6 +80,14 @@ jobs:
           mv "${MODEL_NAME}/espeak-ng-data" ./
           rm -rf "${MODEL_NAME}"
           ls -lh
+      - name: Подготовка piper-phonemize для WASM
+        run: |
+          cd sherpa-onnx/wasm/tts
+          wget -q https://github.com/csukuangfj/piper-phonemize/releases/download/wasm/piper-phonemize-v1.5.9-wasm-browser.zip
+          unzip -q piper-phonemize-v1.5.9-wasm-browser.zip
+          mv browser piper-phonemize
+          rm piper-phonemize-v1.5.9-wasm-browser.zip
+          ls -lh piper-phonemize/
 
       - name: 6. Сборка однопоточного WASM SIMD TTS (build-wasm-simd-tts.sh)
         run: |
