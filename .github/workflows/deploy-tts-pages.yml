@@ -1,0 +1,134 @@
+name: Build & Deploy Russian WASM TTS to GitHub Pages
+
+on:
+  workflow_dispatch:
+    inputs:
+      voice_model:
+        description: 'Русская модель sherpa-onnx (VITS-Piper)'
+        required: true
+        default: 'vits-piper-ru_RU-irina-medium'
+        type: choice
+        options:
+          - vits-piper-ru_RU-irina-medium
+          - vits-piper-ru_RU-ruslan-medium
+          - vits-piper-ru_RU-dmitri-medium
+          - vits-piper-ru_RU-denis-medium
+  push:
+    branches:
+      - main
+      - master
+    paths:
+      - 'index.html'
+      - 'tts-worker.js'
+      - '.github/workflows/deploy-tts-pages.yml'
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: 'pages-tts'
+  cancel-in-progress: true
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-22.04
+    steps:
+      - name: 1. Checkout репозитория читалки
+        uses: actions/checkout@v4
+        with:
+          path: site
+
+      - name: 2. Клонирование k2-fsa/sherpa-onnx
+        run: |
+          git clone --depth 1 https://github.com/k2-fsa/sherpa-onnx.git sherpa-onnx
+
+      - name: 3. Определение требуемой версии Emscripten из build-wasm-simd-tts.sh
+        id: emsdk-ver
+        run: |
+          VER=$(grep -oE 'emsdk install [0-9]+\.[0-9]+\.[0-9]+' sherpa-onnx/build-wasm-simd-tts.sh | head -n 1 | awk '{print $3}')
+          if [ -z "$VER" ]; then VER="4.0.23"; fi
+          echo "version=$VER" >> "$GITHUB_OUTPUT"
+          echo "Detected emsdk version: $VER"
+
+      - name: 4. Установка и кэширование Emscripten SDK
+        uses: mymindstorm/setup-emsdk@v14
+        with:
+          version: ${{ steps.emsdk-ver.outputs.version }}
+          actions-cache-folder: emsdk-cache
+
+      - name: 5. Скачивание предконвертированной русской модели VITS-Piper из релизов sherpa-onnx
+        env:
+          MODEL_NAME: ${{ github.event.inputs.voice_model || 'vits-piper-ru_RU-irina-medium' }}
+        run: |
+          cd sherpa-onnx/wasm/tts/assets
+          rm -rf *.onnx tokens.txt espeak-ng-data
+          URL="https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/${MODEL_NAME}.tar.bz2"
+          echo "Downloading $URL ..."
+          wget -q "$URL"
+          tar xf "${MODEL_NAME}.tar.bz2"
+          rm "${MODEL_NAME}.tar.bz2"
+
+          ONNX_FILE=$(find "${MODEL_NAME}" -maxdepth 1 -name "*.onnx" | head -n 1)
+          if [ -z "$ONNX_FILE" ]; then
+            echo "ONNX file not found in archive!" >&2
+            exit 1
+          fi
+          mv "$ONNX_FILE" ./model.onnx
+          mv "${MODEL_NAME}/tokens.txt" ./
+          mv "${MODEL_NAME}/espeak-ng-data" ./
+          rm -rf "${MODEL_NAME}"
+          ls -lh
+
+      - name: 6. Сборка однопоточного WASM SIMD TTS (build-wasm-simd-tts.sh)
+        run: |
+          cd sherpa-onnx
+          ./build-wasm-simd-tts.sh
+          ls -lh build-wasm-simd-tts/install/bin/wasm/tts/
+
+      - name: 7. Копирование WASM-артефактов в корень сайта (к основному index.html и tts-worker.js)
+        env:
+          MODEL_NAME: ${{ github.event.inputs.voice_model || 'vits-piper-ru_RU-irina-medium' }}
+        run: |
+          WASM_OUT="sherpa-onnx/build-wasm-simd-tts/install/bin/wasm/tts"
+
+          if [ -f "$WASM_OUT/sherpa-onnx-wasm-main-tts.js" ]; then
+            cp "$WASM_OUT/sherpa-onnx-wasm-main-tts.js" site/sherpa-onnx-wasm-main-tts.js
+            cp "$WASM_OUT/sherpa-onnx-wasm-main-tts.wasm" site/sherpa-onnx-wasm-main-tts.wasm
+            cp "$WASM_OUT/sherpa-onnx-wasm-main-tts.data" site/sherpa-onnx-wasm-main-tts.data
+            cp "$WASM_OUT/sherpa-onnx-tts.js" site/sherpa-onnx-tts.js
+          else
+            cp "$WASM_OUT/sherpa-onnx-wasm-main.js" site/sherpa-onnx-wasm-main-tts.js
+            cp "$WASM_OUT/sherpa-onnx-wasm-main.wasm" site/sherpa-onnx-wasm-main-tts.wasm
+            cp "$WASM_OUT/sherpa-onnx-wasm-main.data" site/sherpa-onnx-wasm-main-tts.data
+            cp "$WASM_OUT/sherpa-onnx.js" site/sherpa-onnx-tts.js
+          fi
+
+          WASM_SIZE=$(stat -c%s "site/sherpa-onnx-wasm-main-tts.wasm")
+          DATA_SIZE=$(stat -c%s "site/sherpa-onnx-wasm-main-tts.data")
+          TOTAL_SIZE=$((WASM_SIZE + DATA_SIZE))
+
+          cat <<JSON > site/model-meta.json
+          {
+            "voice": "${MODEL_NAME}",
+            "wasmBytes": ${WASM_SIZE},
+            "dataBytes": ${DATA_SIZE},
+            "totalBytes": ${TOTAL_SIZE}
+          }
+          JSON
+
+          touch site/.nojekyll
+          ls -lh site/
+
+      - name: 8. Настройка GitHub Pages
+        uses: actions/configure-pages@v5
+
+      - name: 9. Упаковка артефакта GitHub Pages
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+
+      - name: 10. Публикация на GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
