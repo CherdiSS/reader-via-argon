@@ -1,0 +1,3502 @@
+<!DOCTYPE html>
+<html lang="ru" class="dark">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=5.0" />
+  <title>Читатель PDF — Чтение и озвучивание документов</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Literata:opsz,wght@7..72,400;7..72,500;7..72,600&display=swap" rel="stylesheet" />
+  <script src="https://cdn.tailwindcss.com/3.4.17"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+  <script>
+    tailwind.config = {
+      darkMode: 'class',
+      theme: {
+        extend: {
+          fontFamily: {
+            sans: ['Inter', '-apple-system', 'BlinkMacSystemFont', 'Segoe UI', 'Roboto', 'sans-serif'],
+            serif: ['Literata', 'Georgia', 'serif']
+          }
+        }
+      }
+    };
+  </script>
+  <style>
+    :root {
+      --bg-primary: #0b0f17; --bg-secondary: rgba(22, 30, 46, 0.78); --bg-reader: rgba(16, 23, 36, 0.88);
+      --text-primary: #ecf2f8; --text-secondary: #94a3b8; --border-color: rgba(56, 189, 248, 0.16);
+      --accent-color: #38bdf8; --word-hover: rgba(56, 189, 248, 0.18);
+      --word-active-bg: #facc15; --word-active-text: #0f172a;
+      --search-match-bg: rgba(56, 189, 248, 0.28); --search-current-bg: #f97316; --search-current-text: #ffffff;
+      --glow-1: rgba(56, 189, 248, 0.14); --glow-2: rgba(16, 185, 129, 0.10); --glow-3: rgba(99, 102, 241, 0.11);
+    }
+    body.night-comfort {
+      --bg-primary: #080a0f; --bg-secondary: rgba(20, 22, 30, 0.84); --bg-reader: rgba(14, 16, 22, 0.92);
+      --text-primary: #dfd3be; --text-secondary: #968b7c; --border-color: rgba(245, 158, 11, 0.18);
+      --accent-color: #f59e0b; --word-hover: rgba(245, 158, 11, 0.2);
+      --word-active-bg: #fbbf24; --word-active-text: #090b10;
+      --glow-1: rgba(245, 158, 11, 0.12); --glow-2: rgba(217, 119, 6, 0.08); --glow-3: rgba(180, 83, 9, 0.09);
+    }
+    * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+    html, body {
+      margin: 0; padding: 0; background-color: var(--bg-primary); color: var(--text-primary);
+      font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+      overflow-x: hidden; transition: background-color 0.45s ease, color 0.35s ease;
+    }
+    body::before {
+      content: ''; position: fixed; inset: -20%; z-index: -1; pointer-events: none; filter: blur(45px);
+      background:
+        radial-gradient(circle at 18% 18%, var(--glow-1) 0%, transparent 42%),
+        radial-gradient(circle at 82% 26%, var(--glow-2) 0%, transparent 40%),
+        radial-gradient(circle at 50% 82%, var(--glow-3) 0%, transparent 48%);
+      animation: ambientAurora 18s ease-in-out infinite alternate;
+    }
+    @keyframes ambientAurora {
+      0% { transform: translate3d(0, 0, 0) scale(1); }
+      50% { transform: translate3d(-2%, 2%, 0) scale(1.05); }
+      100% { transform: translate3d(2%, -1.5%, 0) scale(0.98); }
+    }
+    @keyframes cardEntrance { 0% { opacity: 0; transform: translateY(14px); } 100% { opacity: 1; transform: translateY(0); } }
+    @keyframes pageContentFade { 0% { opacity: 0; transform: translateY(8px); } 100% { opacity: 1; transform: translateY(0); } }
+    @keyframes activeWordPulse {
+      0%, 100% { box-shadow: 0 0 0 2px var(--word-active-bg), 0 0 12px rgba(250, 204, 21, 0.45); }
+      50% { box-shadow: 0 0 0 3px var(--word-active-bg), 0 0 20px rgba(250, 204, 21, 0.75); }
+    }
+    @keyframes eqBarBounce { 0%, 100% { transform: scaleY(0.3); } 50% { transform: scaleY(1); } }
+    .surface-card {
+      background-color: var(--bg-secondary); backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px);
+      border: 1px solid var(--border-color);
+      box-shadow: 0 10px 30px -10px rgba(0, 0, 0, 0.5), inset 0 1px 0 0 rgba(255, 255, 255, 0.06);
+      transition: transform 0.25s cubic-bezier(0.22, 1, 0.36, 1), border-color 0.25s ease, box-shadow 0.25s ease, background-color 0.35s ease;
+      animation: cardEntrance 0.45s cubic-bezier(0.22, 1, 0.36, 1) both;
+    }
+    .surface-card:hover {
+      border-color: rgba(56, 189, 248, 0.28);
+      box-shadow: 0 14px 36px -10px rgba(0, 0, 0, 0.6), inset 0 1px 0 0 rgba(255, 255, 255, 0.09);
+    }
+    body.night-comfort .surface-card:hover { border-color: rgba(245, 158, 11, 0.32); }
+    .reader-surface {
+      background-color: var(--bg-reader); backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px);
+      border: 1px solid var(--border-color);
+      box-shadow: 0 20px 50px -15px rgba(0, 0, 0, 0.65), inset 0 1px 0 0 rgba(255, 255, 255, 0.05);
+      transition: border-color 0.3s ease, background-color 0.35s ease;
+      animation: cardEntrance 0.55s cubic-bezier(0.22, 1, 0.36, 1) both;
+    }
+    .page-fade-anim { animation: pageContentFade 0.32s cubic-bezier(0.22, 1, 0.36, 1) both; }
+    button { transition: all 0.2s cubic-bezier(0.22, 1, 0.36, 1); }
+    button:not(:disabled):active { transform: scale(0.96); }
+    .btn-glow-sky { background: linear-gradient(135deg, #38bdf8 0%, #0ea5e9 100%); box-shadow: 0 4px 16px -3px rgba(56, 189, 248, 0.45); }
+    .btn-glow-sky:hover { background: linear-gradient(135deg, #7dd3fc 0%, #38bdf8 100%); box-shadow: 0 6px 22px -2px rgba(56, 189, 248, 0.65); transform: translateY(-1px); }
+    .btn-glow-emerald { background: linear-gradient(135deg, #34d399 0%, #10b981 100%); box-shadow: 0 4px 18px -3px rgba(16, 185, 129, 0.45); }
+    .btn-glow-emerald:hover { background: linear-gradient(135deg, #6ee7b7 0%, #34d399 100%); box-shadow: 0 6px 24px -2px rgba(16, 185, 129, 0.65); transform: translateY(-1px); }
+    .reader-word {
+      display: inline; padding: 2px 4px; margin: 0 -1px; border-radius: 6px; cursor: pointer;
+      transition: background-color 0.14s ease, color 0.14s ease, box-shadow 0.14s ease;
+      line-height: 1.8; word-break: break-word;
+    }
+    .reader-word:hover { background-color: var(--word-hover); }
+    .reader-word.active-word {
+      background-color: var(--word-active-bg) !important; color: var(--word-active-text) !important;
+      font-weight: 600; animation: activeWordPulse 1.6s ease-in-out infinite;
+    }
+    .reader-word.active-phrase-fallback:not(.active-word) { background-color: rgba(250, 204, 21, 0.16); border-bottom: 1.5px dashed rgba(250, 204, 21, 0.55); }
+    .reader-word.selected-start-word:not(.active-word) { outline: 1.5px dashed var(--accent-color); background-color: rgba(56, 189, 248, 0.14); }
+    .reader-word.search-match { background-color: var(--search-match-bg); border-bottom: 2px solid var(--accent-color); }
+    .reader-word.search-current { background-color: var(--search-current-bg) !important; color: var(--search-current-text) !important; font-weight: 600; box-shadow: 0 0 12px rgba(249, 115, 22, 0.6); }
+    .speech-eq { display: inline-flex; align-items: center; gap: 2px; height: 13px; }
+    .speech-eq span { width: 2.5px; height: 100%; border-radius: 999px; background-color: currentColor; transform: scaleY(0.3); transition: transform 0.2s ease, background-color 0.2s ease; }
+    .speech-eq.speaking span:nth-child(1) { animation: eqBarBounce 0.65s ease-in-out infinite 0s; }
+    .speech-eq.speaking span:nth-child(2) { animation: eqBarBounce 0.65s ease-in-out infinite 0.16s; }
+    .speech-eq.speaking span:nth-child(3) { animation: eqBarBounce 0.65s ease-in-out infinite 0.32s; }
+    .speech-eq.speaking span:nth-child(4) { animation: eqBarBounce 0.65s ease-in-out infinite 0.12s; }
+    input[type="range"] { -webkit-appearance: none; appearance: none; height: 7px; background: rgba(38, 50, 68, 0.9); border-radius: 999px; outline: none; transition: background 0.2s ease; }
+    input[type="range"]::-webkit-slider-thumb {
+      -webkit-appearance: none; appearance: none; width: 20px; height: 20px; border-radius: 50%;
+      background: #38bdf8; cursor: pointer; border: 2px solid #0f141c;
+      box-shadow: 0 0 10px rgba(56, 189, 248, 0.6); transition: transform 0.15s ease, box-shadow 0.15s ease;
+    }
+    input[type="range"]::-webkit-slider-thumb:hover { transform: scale(1.15); box-shadow: 0 0 14px rgba(56, 189, 248, 0.85); }
+    body.night-comfort input[type="range"]::-webkit-slider-thumb { background: #f59e0b; box-shadow: 0 0 10px rgba(245, 158, 11, 0.6); }
+    ::-webkit-scrollbar { width: 8px; height: 8px; }
+    ::-webkit-scrollbar-track { background: rgba(15, 20, 28, 0.6); }
+    ::-webkit-scrollbar-thumb { background: #334155; border-radius: 4px; }
+    ::-webkit-scrollbar-thumb:hover { background: #475569; }
+  </style>
+</head>
+<body class="min-h-screen flex flex-col selection:bg-sky-500 selection:text-slate-950">
+
+  <!-- Верхняя шапка -->
+  <header class="sticky top-0 z-30 backdrop-blur-md bg-slate-900/90 border-b border-slate-800 px-3 py-2.5 sm:px-6">
+    <div class="max-w-5xl mx-auto flex flex-wrap items-center justify-between gap-2.5">
+      <div class="flex items-center gap-2.5 min-w-0">
+        <div class="w-9 h-9 rounded-xl bg-sky-500/15 border border-sky-400/30 flex items-center justify-center text-sky-400 shrink-0">
+          <svg class="w-5 h-5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" aria-hidden="true">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477 4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253" />
+          </svg>
+        </div>
+        <div class="min-w-0">
+          <h1 class="text-base sm:text-lg font-bold tracking-tight text-slate-100 truncate">Читатель PDF</h1>
+          <p id="fileNameDisplay" class="text-xs text-slate-400 truncate max-w-[200px] sm:max-w-md" title="Файл не выбран">Файл не выбран</p>
+        </div>
+      </div>
+
+      <div class="flex items-center gap-2">
+        <input id="pdfFileInput" type="file" accept="application/pdf,.pdf" class="hidden" />
+        <button id="selectPdfBtn" type="button" class="btn-glow-sky inline-flex items-center gap-2 px-4 py-2 rounded-xl text-slate-950 font-semibold text-sm transition cursor-pointer">
+          <svg class="w-4 h-4 shrink-0" fill="none" stroke="currentColor" stroke-width="2.2" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12" />
+          </svg>
+          <span>Выбрать PDF</span>
+        </button>
+
+        <button id="loadDemoBtn" type="button" class="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 text-xs sm:text-sm font-medium transition" title="Загрузить демонстрационный учебный документ для проверки озвучивания">
+          <span>Демо-текст</span>
+        </button>
+
+        <button id="nightModeBtn" type="button" class="p-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 transition" title="Переключить ночной комфортный режим (тёплый контраст)" aria-label="Ночной режим">
+          <svg id="nightModeIcon" class="w-5 h-5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M20.354 15.354A9 9 0 018.646 3.646 9.003 9.003 0 0012 21a9.003 9.003 0 008.354-5.646z" />
+          </svg>
+        </button>
+      </div>
+    </div>
+  </header>
+
+  <!-- Основной контейнер -->
+  <main class="flex-1 max-w-5xl w-full mx-auto px-3 py-4 sm:px-6 space-y-4">
+
+    <!-- Уведомления об ошибках и предупреждения -->
+    <div id="statusAlert" class="hidden rounded-2xl p-3.5 border text-sm flex items-start justify-between gap-3 transition" role="alert">
+      <div class="flex items-start gap-2.5">
+        <svg id="statusAlertIcon" class="w-5 h-5 shrink-0 mt-0.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+        </svg>
+        <div id="statusAlertText" class="leading-relaxed"></div>
+      </div>
+      <button id="closeAlertBtn" type="button" class="text-xs px-2 py-1 rounded-lg bg-black/20 hover:bg-black/40 shrink-0">Закрыть</button>
+    </div>
+
+    <!-- Баннер предложения продолжить с сохранённой позиции -->
+    <div id="resumeBanner" class="hidden rounded-2xl p-3.5 bg-sky-950/80 border border-sky-500/40 text-sky-100 flex flex-wrap items-center justify-between gap-3">
+      <div class="flex items-center gap-2.5 text-sm">
+        <svg class="w-5 h-5 text-sky-400 shrink-0" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+        </svg>
+        <span id="resumeBannerText">Найдена сохранённая позиция чтения для этого документа.</span>
+      </div>
+      <div class="flex items-center gap-2">
+        <button id="confirmResumeBtn" type="button" class="px-3 py-1.5 rounded-xl bg-sky-400 hover:bg-sky-300 text-slate-950 font-semibold text-xs sm:text-sm transition">
+          Продолжить чтение
+        </button>
+        <button id="dismissResumeBtn" type="button" class="px-3 py-1.5 rounded-xl bg-slate-800/80 hover:bg-slate-700 text-slate-300 text-xs sm:text-sm transition">
+          С начала
+        </button>
+      </div>
+    </div>
+
+    <!-- Модальное окно ввода пароля для защищённых PDF -->
+    <div id="passwordModal" class="hidden rounded-2xl p-4 surface-card border-amber-500/50 space-y-3">
+      <div class="flex items-center gap-2 text-amber-400 font-semibold text-sm">
+        <svg class="w-5 h-5 shrink-0" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" />
+        </svg>
+        <span>Документ защищён паролем</span>
+      </div>
+      <p id="passwordModalHint" class="text-xs text-slate-300">Введите пароль для открытия PDF-файла:</p>
+      <div class="flex flex-wrap items-center gap-2">
+        <input id="pdfPasswordInput" type="password" placeholder="Пароль документа..." class="flex-1 min-w-[180px] px-3 py-2 rounded-xl bg-slate-900 border border-slate-700 text-sm text-slate-100 focus:outline-none focus:border-sky-400" />
+        <button id="submitPasswordBtn" type="button" class="px-4 py-2 rounded-xl bg-amber-500 hover:bg-amber-400 text-slate-950 font-semibold text-sm transition">Открыть</button>
+        <button id="cancelPasswordBtn" type="button" class="px-3 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 text-sm transition">Отмена</button>
+      </div>
+    </div>
+
+    <!-- Панель настроек голоса, пресета подачи, скорости, высоты голоса и шрифта -->
+    <section class="surface-card rounded-2xl p-3.5 sm:p-4 space-y-3.5 shadow-lg">
+      <!-- Блок нейросетевой озвучки Sherpa-ONNX WASM (интегрированный в основную читалку) -->
+      <div class="rounded-xl bg-slate-900/75 border border-sky-500/30 p-3 sm:p-3.5 space-y-2.5">
+        <div class="flex flex-wrap items-center justify-between gap-2">
+          <div class="flex flex-wrap items-center gap-2">
+            <span class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-sky-500/15 border border-sky-400/30 text-sky-300 text-xs font-semibold">
+              <span>🧠 Движок озвучки</span>
+            </span>
+            <select id="ttsEngineSelect" class="px-3 py-1.5 rounded-xl bg-slate-950 border border-slate-700 text-slate-100 text-xs sm:text-sm font-medium focus:outline-none focus:border-sky-400">
+              <option value="sherpa-wasm">Нейросетевой Sherpa-ONNX WASM (офлайн в браузере, ru_RU)</option>
+              <option value="web-speech">Системный голос браузера (Web Speech API)</option>
+            </select>
+          </div>
+
+          <div class="flex flex-wrap items-center gap-2">
+            <span id="wasmModelSizeBadge" class="text-xs font-semibold px-2.5 py-1 rounded-lg bg-slate-800 text-slate-300 border border-slate-700">Модель: ~78.4 МБ</span>
+            <button id="loadWasmModelBtn" type="button" class="btn-glow-sky inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl text-slate-950 font-semibold text-xs sm:text-sm transition">
+              <span>Загрузить модель</span>
+            </button>
+            <button id="loadMockWasmBtn" type="button" class="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 text-xs font-medium transition" title="Включить легковесный тестовый синтезатор в Web Worker для проверки очереди, паузы и WAV-тракта без скачивания 78 МБ">
+              <span>Тест очереди (без 78 МБ)</span>
+            </button>
+          </div>
+        </div>
+
+        <!-- Полоса загрузки модели -->
+        <div id="wasmProgressWrap" class="hidden w-full h-2 bg-slate-950 rounded-full overflow-hidden border border-slate-800">
+          <div id="wasmProgressBar" class="h-full w-0 bg-gradient-to-r from-sky-400 to-emerald-400 transition-all duration-150"></div>
+        </div>
+
+        <!-- Статус модели, настройки размера фрагмента очереди и статистика генерации -->
+        <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-2 text-xs text-slate-300">
+          <div id="wasmModelStatus" class="text-slate-300 leading-relaxed">
+            Модель не загружена. Нажмите «Загрузить модель» (или сразу «Читать» — модель загрузится автоматически один раз за сеанс).
+          </div>
+          <div class="flex flex-wrap items-center gap-2 shrink-0">
+            <label for="chunkSizeInput" class="text-slate-400" title="Внутренний размер одной порции синтеза в очереди (от 150 до 800 символов). Весь документ читается целиком без ограничений.">Порция очереди:</label>
+            <input id="chunkSizeInput" type="number" min="150" max="800" step="50" value="500" class="w-16 px-2 py-1 rounded-lg bg-slate-950 border border-slate-700 text-center font-semibold text-sky-300 focus:outline-none focus:border-sky-400" />
+            <span class="text-slate-400">симв.</span>
+          </div>
+        </div>
+
+        <div class="flex flex-wrap items-center justify-between gap-2 pt-1 border-t border-slate-800/80 text-[11px] text-slate-400">
+          <span id="wasmQueueMetrics">Очередь: 0 фрагм. • Время синтеза: — • Буфер: 0/2</span>
+          <span>Скорость в режиме WASM применяется к следующим синтезируемым фрагментам очереди без искажения тембра</span>
+        </div>
+
+        <!-- Понятные ошибки нейросетевого синтеза -->
+        <div id="wasmErrorBox" role="alert" class="hidden p-2.5 rounded-xl bg-rose-950/90 border border-rose-500/50 text-rose-100 text-xs flex items-start justify-between gap-2">
+          <div id="wasmErrorText" class="whitespace-pre-wrap leading-relaxed"></div>
+          <button id="closeWasmErrorBtn" type="button" class="px-2 py-0.5 rounded bg-black/30 hover:bg-black/50 text-rose-200 shrink-0">✕</button>
+        </div>
+
+        <audio id="neuralAudioPlayer" playsinline preload="auto" class="hidden"></audio>
+      </div>
+      <div class="grid grid-cols-1 md:grid-cols-12 gap-3">
+        <!-- Реальный системный/браузерный голос -->
+        <div class="md:col-span-5 flex flex-col gap-1.5">
+          <div class="flex items-center justify-between text-xs text-slate-400">
+            <label for="voiceSelect" class="font-medium text-slate-300">Системный голос браузера (RU первыми):</label>
+            <span id="voiceCountBadge" class="text-[11px] text-sky-400">Загрузка голосов...</span>
+          </div>
+          <div class="flex items-center gap-2">
+            <select id="voiceSelect" class="flex-1 min-w-0 px-3 py-2.5 rounded-xl bg-slate-900 border border-slate-700 text-slate-100 text-sm focus:outline-none focus:border-sky-400">
+              <option value="">Загрузка доступных голосов...</option>
+            </select>
+            <button id="testVoiceBtn" type="button" class="shrink-0 inline-flex items-center gap-1.5 px-3 py-2.5 rounded-xl bg-sky-500/15 hover:bg-sky-500/25 text-sky-300 border border-sky-500/30 text-xs sm:text-sm font-medium transition" title="Прослушать одинаковую проверочную фразу выбранным голосом">
+              <svg class="w-4 h-4 shrink-0" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M15.536 8.464a5 5 0 010 7.072m2.828-9.9a9 9 0 010 12.728M5.586 15H4a1 1 0 01-1-1v-4a1 1 0 011-1h1.586l4.707-4.707C10.923 3.663 12 4.109 12 5v14c0 .891-1.077 1.337-1.707.707L5.586 15z" />
+              </svg>
+              <span>Послушать голос</span>
+            </button>
+          </div>
+          <div class="flex items-center gap-2 pt-0.5">
+            <label for="readingPresetSelect" class="text-[11px] text-slate-400 shrink-0">Пресет настроек:</label>
+            <select id="readingPresetSelect" class="flex-1 min-w-0 px-2.5 py-1 rounded-lg bg-slate-900/80 border border-slate-800 text-slate-300 text-xs focus:outline-none focus:border-sky-400">
+              <option value="neutral">Нейтральный (выбранные скорость и высота)</option>
+              <option value="soft">Мягкий (скорость 0.95x, высота 0.95)</option>
+              <option value="study">Учебный размеренный (скорость 0.9x, высота 1.0)</option>
+              <option value="slow">Медленный (скорость 0.8x, высота 0.95)</option>
+              <option value="fast">Ускоренный обзор (скорость 1.25x, высота 1.0)</option>
+            </select>
+          </div>
+        </div>
+
+        <!-- Регулировка скорости -->
+        <div class="md:col-span-3 flex flex-col justify-between gap-1.5 bg-slate-900/50 p-2.5 rounded-xl border border-slate-800/80">
+          <div class="flex items-center justify-between text-xs">
+            <label for="rateRange" class="text-slate-300 font-medium">Скорость речи:</label>
+            <span id="rateValueLabel" class="font-bold text-sky-400">1.0x</span>
+          </div>
+          <div class="flex items-center gap-2">
+            <button id="rateDecBtn" type="button" class="w-7 h-7 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 font-bold text-sm flex items-center justify-center" aria-label="Уменьшить скорость">−</button>
+            <input id="rateRange" type="range" min="0.5" max="2.0" step="0.1" value="1.0" class="flex-1" />
+            <button id="rateIncBtn" type="button" class="w-7 h-7 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 font-bold text-sm flex items-center justify-center" aria-label="Увеличить скорость">+</button>
+          </div>
+        </div>
+
+        <!-- Регулировка высоты голоса (Pitch) -->
+        <div class="md:col-span-2 flex flex-col justify-between gap-1.5 bg-slate-900/50 p-2.5 rounded-xl border border-slate-800/80">
+          <div class="flex items-center justify-between text-xs">
+            <label for="pitchRange" class="text-slate-300 font-medium">Высота голоса:</label>
+            <span id="pitchValueLabel" class="font-bold text-emerald-400">1.00</span>
+          </div>
+          <div class="flex items-center gap-1.5">
+            <button id="pitchDecBtn" type="button" class="w-6 h-7 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 font-bold text-xs flex items-center justify-center" aria-label="Понизить высоту голоса">−</button>
+            <input id="pitchRange" type="range" min="0.7" max="1.3" step="0.05" value="1.0" class="flex-1" />
+            <button id="pitchIncBtn" type="button" class="w-6 h-7 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 font-bold text-xs flex items-center justify-center" aria-label="Повысить высоту голоса">+</button>
+          </div>
+        </div>
+
+        <!-- Регулировка размера шрифта -->
+        <div class="md:col-span-2 flex flex-col justify-between gap-1.5 bg-slate-900/50 p-2.5 rounded-xl border border-slate-800/80">
+          <div class="flex items-center justify-between text-xs">
+            <label for="fontSizeRange" class="text-slate-300 font-medium">Шрифт:</label>
+            <span id="fontSizeValueLabel" class="font-bold text-sky-400">20px</span>
+          </div>
+          <div class="flex items-center gap-1.5">
+            <button id="fontDecBtn" type="button" class="w-6 h-7 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 font-bold text-xs flex items-center justify-center" aria-label="Уменьшить шрифт">A−</button>
+            <input id="fontSizeRange" type="range" min="14" max="34" step="1" value="20" class="flex-1" />
+            <button id="fontIncBtn" type="button" class="w-6 h-7 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-200 font-bold text-xs flex items-center justify-center" aria-label="Увеличить шрифт">A+</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Переключатели режимов -->
+      <div class="flex flex-wrap items-center justify-between gap-3 pt-2 border-t border-slate-800/80 text-xs sm:text-sm">
+        <div class="flex flex-wrap items-center gap-3.5">
+          <label class="inline-flex items-center gap-2 cursor-pointer select-none" title="Озвучивать полными предложениями с учётом русских сокращений и инициалов">
+            <input id="smoothReadingToggle" type="checkbox" checked class="w-4 h-4 rounded accent-sky-400" />
+            <span class="text-slate-200 font-medium">Плавное чтение (предложениями)</span>
+          </label>
+
+          <label class="inline-flex items-center gap-2 cursor-pointer select-none" title="Контекстное раскрытие сокращений (см., рис., табл., г.), согласование чисел с единицами (1 мг, 2 мг, 5 мг) и применение словаря без искажения смысла">
+            <input id="smartPronunciationToggle" type="checkbox" checked class="w-4 h-4 rounded accent-emerald-400" />
+            <span class="text-emerald-300 font-medium">Подготовка текста для речи (сокращения, числа, словарь)</span>
+          </label>
+
+          <label class="inline-flex items-center gap-2 cursor-pointer select-none">
+            <input id="continuousReadingToggle" type="checkbox" checked class="w-4 h-4 rounded accent-sky-400" />
+            <span class="text-slate-200 font-medium">Читать весь документ</span>
+          </label>
+
+          <label class="inline-flex items-center gap-2 cursor-pointer select-none">
+            <input id="autoScrollToggle" type="checkbox" class="w-4 h-4 rounded accent-sky-400" />
+            <span class="text-slate-300">Автопрокрутка внутри текста</span>
+          </label>
+        </div>
+
+        <div class="flex flex-wrap items-center gap-2">
+          <button id="toggleDictModalBtn" type="button" class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-emerald-500/15 hover:bg-emerald-500/25 text-emerald-300 border border-emerald-500/30 text-xs font-medium transition">
+            <span>📖 Словарь произношения</span>
+          </button>
+          <button id="toggleSelfTestBtn" type="button" class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 text-xs font-medium transition" title="Показать проверку сегментации и нормализации на 10 контрольных примерах">
+            <span>🔬 Проверка текста</span>
+          </button>
+          <div class="text-xs text-slate-400">
+            Позиция: <span id="readingProgressText" class="text-slate-200 font-medium">слово 0 из 0</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- Раскрывающаяся панель пользовательского словаря произношения -->
+      <div id="pronunciationDictPanel" class="hidden pt-3 border-t border-slate-800/80 space-y-2.5 text-xs">
+        <div class="flex flex-wrap items-center justify-between gap-2">
+          <span class="text-slate-300 font-medium">Пользовательский словарь замен (однословные и многословные выражения; приоритет выше встроенных правил):</span>
+          <span class="text-slate-400">Примечание: браузерный Web Speech API не поддерживает SSML и универсальный знак ударения во всех голосах — проверяйте замены кнопкой «Прослушать замену».</span>
+        </div>
+        <div class="flex flex-wrap items-center gap-2">
+          <input id="customDictFromInput" type="text" placeholder="Исходное слово или фраза (напр. берет книгу)" class="px-3 py-1.5 rounded-xl bg-slate-900 border border-slate-700 text-slate-100 focus:outline-none focus:border-sky-400" />
+          <span class="text-slate-400">→</span>
+          <input id="customDictToInput" type="text" placeholder="Текст для синтезатора (напр. берёт книгу)" class="flex-1 min-w-[200px] px-3 py-1.5 rounded-xl bg-slate-900 border border-slate-700 text-slate-100 focus:outline-none focus:border-sky-400" />
+          <button id="previewDictRuleBtn" type="button" class="px-3 py-1.5 rounded-xl bg-sky-500/20 hover:bg-sky-500/30 text-sky-300 border border-sky-500/30 font-medium transition">Прослушать замену</button>
+          <button id="addCustomDictRuleBtn" type="button" class="px-3.5 py-1.5 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-semibold transition">Добавить правило</button>
+        </div>
+        <div id="customDictTagsContainer" class="flex flex-wrap items-center gap-1.5 pt-1"></div>
+      </div>
+
+      <!-- Панель самопроверки конвейера подготовки текста и сегментации (10 контрольных примеров) -->
+      <div id="selfTestPanel" class="hidden pt-3 border-t border-slate-800/80 space-y-2.5 text-xs">
+        <div class="flex flex-wrap items-center justify-between gap-2">
+          <span class="text-slate-200 font-semibold">Контрольные примеры сегментации, нормализации и диапазонов подсветки:</span>
+          <button id="runSelfTestBtn" type="button" class="px-3 py-1 rounded-lg bg-sky-500/20 hover:bg-sky-500/30 text-sky-300 border border-sky-500/30 font-medium">Обновить расчёт примеров</button>
+        </div>
+        <div id="selfTestResultsContainer" class="space-y-2 max-h-64 overflow-y-auto pr-1"></div>
+      </div>
+    </section>
+
+    <!-- Панель навигации по страницам, поиска и экспорта текста -->
+    <section class="surface-card rounded-2xl p-3 sm:p-3.5 flex flex-col lg:flex-row items-stretch lg:items-center justify-between gap-3">
+      <div class="flex flex-wrap items-center justify-between sm:justify-start gap-2">
+        <button id="prevPageBtn" type="button" disabled class="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 disabled:opacity-40 disabled:pointer-events-none text-slate-200 border border-slate-700 text-xs sm:text-sm font-medium transition">
+          <svg class="w-4 h-4 shrink-0" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M15 19l-7-7 7-7" />
+          </svg>
+          <span>Предыдущая страница</span>
+        </button>
+
+        <div class="flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl bg-slate-900 border border-slate-800 text-xs sm:text-sm">
+          <span class="text-slate-400">Стр.</span>
+          <input id="pageNumberInput" type="number" min="1" max="1" value="1" disabled class="w-14 px-2 py-1 rounded-lg bg-slate-800 border border-slate-700 text-center font-semibold text-slate-100 focus:outline-none focus:border-sky-400" aria-label="Номер страницы" />
+          <span class="text-slate-400">из <strong id="totalPagesLabel" class="text-slate-200">0</strong></span>
+          <button id="goToPageBtn" type="button" disabled class="ml-1 px-2.5 py-1 rounded-lg bg-sky-500/20 hover:bg-sky-500/30 disabled:opacity-40 text-sky-300 font-medium text-xs transition">Перейти</button>
+        </div>
+
+        <button id="nextPageBtn" type="button" disabled class="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 disabled:opacity-40 disabled:pointer-events-none text-slate-200 border border-slate-700 text-xs sm:text-sm font-medium transition">
+          <span>Следующая страница</span>
+          <svg class="w-4 h-4 shrink-0" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M9 5l7 7-7 7" />
+          </svg>
+        </button>
+      </div>
+
+      <div class="flex flex-wrap items-center justify-between gap-2">
+        <div class="flex items-center gap-1.5 flex-1 sm:flex-initial min-w-[220px] bg-slate-900 border border-slate-700 rounded-xl px-2.5 py-1.5">
+          <svg class="w-4 h-4 text-slate-400 shrink-0" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+          </svg>
+          <input id="searchInput" type="text" placeholder="Поиск на странице..." class="bg-transparent text-xs sm:text-sm text-slate-100 placeholder-slate-500 focus:outline-none w-full min-w-[90px]" />
+          <span id="searchCountLabel" class="text-[11px] text-slate-400 shrink-0">0/0</span>
+          <button id="searchPrevBtn" type="button" class="p-1 rounded hover:bg-slate-800 text-slate-300" title="Предыдущее совпадение" aria-label="Предыдущее совпадение">↑</button>
+          <button id="searchNextBtn" type="button" class="p-1 rounded hover:bg-slate-800 text-slate-300" title="Следующее совпадение" aria-label="Следующее совпадение">↓</button>
+          <button id="searchClearBtn" type="button" class="p-1 rounded hover:bg-slate-800 text-slate-400 text-xs" title="Очистить поиск" aria-label="Очистить поиск">✕</button>
+        </div>
+
+        <div class="flex items-center gap-2">
+          <button id="copyPageTextBtn" type="button" class="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 text-xs font-medium transition" title="Скопировать исходный текст текущей страницы в буфер обмена">
+            <svg class="w-4 h-4 text-sky-400 shrink-0" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
+            </svg>
+            <span>Скопировать текст страницы</span>
+          </button>
+
+          <button id="downloadPageTextBtn" type="button" class="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 text-xs font-medium transition" title="Скачать исходный текст текущей страницы в формате .txt">
+            <svg class="w-4 h-4 text-emerald-400 shrink-0" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+            </svg>
+            <span>Скачать текст страницы</span>
+          </button>
+        </div>
+      </div>
+    </section>
+
+    <!-- Плашка взаимодействия с озвучиванием непосредственно над текстом -->
+    <section class="surface-card rounded-2xl p-3.5 sm:p-4 shadow-xl border-sky-500/30 space-y-3">
+      <div class="flex flex-wrap items-center justify-between gap-2.5">
+        <div class="flex flex-wrap items-center gap-2 w-full sm:w-auto">
+          <button id="playCurrentBtn" type="button" class="btn-glow-emerald flex-1 sm:flex-initial inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl text-slate-950 font-semibold text-sm transition">
+            <svg class="w-4 h-4 shrink-0" fill="currentColor" viewBox="0 0 20 20">
+              <path d="M6.3 2.841A1.5 1.5 0 004 4.11V15.89a1.5 1.5 0 002.3 1.269l9.344-5.89a1.5 1.5 0 000-2.538L6.3 2.84z" />
+            </svg>
+            <span id="playCurrentBtnText">Читать</span>
+          </button>
+
+          <button id="playFromStartBtn" type="button" class="flex-1 sm:flex-initial inline-flex items-center justify-center gap-1.5 px-3.5 py-2.5 rounded-xl bg-slate-800/90 hover:bg-slate-700/90 text-slate-100 border border-slate-700/80 font-medium text-sm transition">
+            <svg class="w-4 h-4 shrink-0 text-sky-400" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+            </svg>
+            <span>Читать с начала страницы</span>
+          </button>
+
+          <button id="pauseResumeBtn" type="button" disabled class="flex-1 sm:flex-initial inline-flex items-center justify-center gap-1.5 px-3.5 py-2.5 rounded-xl bg-amber-500/20 hover:bg-amber-500/30 disabled:opacity-40 disabled:pointer-events-none text-amber-300 border border-amber-500/30 font-medium text-sm transition">
+            <svg class="w-4 h-4 shrink-0" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M10 9v6m4-6v6m7-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+            </svg>
+            <span id="pauseResumeBtnText">Пауза / Продолжить</span>
+          </button>
+
+          <button id="stopBtn" type="button" disabled class="inline-flex items-center justify-center gap-1.5 px-3.5 py-2.5 rounded-xl bg-rose-500/20 hover:bg-rose-500/30 disabled:opacity-40 disabled:pointer-events-none text-rose-300 border border-rose-500/30 font-medium text-sm transition">
+            <svg class="w-4 h-4 shrink-0" fill="currentColor" viewBox="0 0 20 20">
+              <rect x="5" y="5" width="10" height="10" rx="1.5" />
+            </svg>
+            <span>Стоп</span>
+          </button>
+        </div>
+
+        <!-- Статус синтезатора с анимированным эквалайзером -->
+        <div class="flex items-center gap-2.5 text-xs font-medium px-3.5 py-2 rounded-xl bg-slate-900/90 border border-slate-800/90 shadow-inner">
+          <span id="speechStateDot" class="w-2.5 h-2.5 rounded-full bg-slate-500"></span>
+          <div id="speechEqualizer" class="speech-eq text-emerald-400" aria-hidden="true">
+            <span></span><span></span><span></span><span></span>
+          </div>
+          <span id="speechStateLabel" class="text-slate-300">Готов к чтению</span>
+        </div>
+      </div>
+
+      <!-- Плавная полоса прогресса чтения страницы -->
+      <div class="w-full h-1.5 bg-slate-900/90 rounded-full overflow-hidden border border-slate-800/60">
+        <div id="readingProgressBarFill" class="h-full w-0 bg-gradient-to-r from-sky-400 via-emerald-400 to-amber-300 rounded-full transition-all duration-300 ease-out"></div>
+      </div>
+    </section>
+
+    <!-- Область чтения текста -->
+    <section class="reader-surface rounded-2xl p-4 sm:p-7 shadow-xl min-h-[380px] max-h-[68vh] overflow-y-auto relative" id="readerScrollContainer">
+      <div class="flex flex-wrap items-center justify-between gap-2 pb-3 mb-4 border-b border-slate-800/80 text-xs text-slate-400">
+        <span>💡 Нажмите на любое слово в тексте, чтобы начать озвучивание с него. Многоколоночные таблицы и сканы без текстового слоя (OCR) имеют ограничения.</span>
+        <span id="pageMetaBadge" class="text-slate-400">Страница не загружена</span>
+      </div>
+
+      <div id="readerTextContainer" class="font-serif leading-relaxed select-text" style="font-size: 20px;">
+        <div id="emptyStateBox" class="py-12 px-4 text-center space-y-4 font-sans">
+          <div class="w-16 h-16 rounded-2xl bg-sky-500/10 border border-sky-400/20 flex items-center justify-center mx-auto text-sky-400">
+            <svg class="w-8 h-8" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+            </svg>
+          </div>
+          <div class="max-w-md mx-auto space-y-1.5">
+            <h2 class="text-lg font-semibold text-slate-100">Выберите PDF-файл для чтения и озвучивания</h2>
+            <p class="text-sm text-slate-400">
+              Все файлы обрабатываются локально в вашем браузере на телефоне или компьютере без отправки на сервер.
+            </p>
+          </div>
+          <div class="flex flex-wrap items-center justify-center gap-3 pt-2">
+            <button id="emptyStateSelectBtn" type="button" class="px-5 py-2.5 rounded-xl bg-sky-500 hover:bg-sky-400 text-slate-950 font-semibold text-sm transition">
+              Выбрать PDF с устройства
+            </button>
+            <button id="emptyStateDemoBtn" type="button" class="px-4 py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 text-sm font-medium transition">
+              Открыть демо-документ
+            </button>
+          </div>
+        </div>
+      </div>
+    </section>
+
+  </main>
+
+  <!-- Всплывающее уведомление (Toast) -->
+  <div id="toastNotification" class="fixed bottom-5 right-5 z-50 hidden max-w-sm px-4 py-3 rounded-xl bg-slate-800/95 border border-sky-500/40 text-slate-100 text-sm shadow-2xl transition-all">
+    <span id="toastMessage">Готово</span>
+  </div>
+
+  <script>
+    (function () {
+      'use strict';
+
+      if (typeof window !== 'undefined' && window.pdfjsLib) {
+        window.pdfjsLib.GlobalWorkerOptions.workerSrc =
+          'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+      }
+
+      const STORAGE_GLOBAL_KEY = 'pdf_reader_tts_global_settings_v2';
+      const STORAGE_LEGACY_KEY = 'pdf_reader_tts_global_settings_v1';
+      const STORAGE_DOC_PREFIX = 'pdf_reader_tts_doc_v1_';
+
+      // Одинаковый проверочный текст для честного сравнения любых голосов
+      const UNIFORM_VOICE_TEST_TEXT =
+        'Проверка голоса: А. С. Пушкин родился в тысяча семьсот девяносто девятом году, а дозировка составила пять миллиграммов.';
+
+      // Настройки пресетов чтения (отделены от реальных голосов браузера)
+      const READING_STYLE_PRESETS = {
+        neutral: { label: 'Нейтральный', rate: null, pitch: null },
+        soft: { label: 'Мягкий', rate: 0.95, pitch: 0.95 },
+        study: { label: 'Учебный размеренный', rate: 0.9, pitch: 1.0 },
+        slow: { label: 'Медленный', rate: 0.8, pitch: 0.95 },
+        fast: { label: 'Ускоренный обзор', rate: 1.25, pitch: 1.0 }
+      };
+
+      // Демонстрационный учебный документ, включающий проверочные случаи
+      const DEMO_PAGES = [
+        [
+          'См. рис. 2. Далее описана структура органа и приведены клинические данные исследования.',
+          'А. С. Пушкин родился в 1799 г. В главе IV описаны ключевые изменения, а в IV главе приведена сводная таблица результатов.',
+          'Пациент получил 1 мг, затем 2 мг и 5 мг препарата. Значение показателя составило 3,5%. Диапазон дозировки — 5–10 мг.',
+          'Это длинное предложение более чем из двадцати четырёх слов специально составлено для проверки того, что алгоритм сегментации не обрывает фразу на двенадцатом слове после запятой или на двадцать четвёртом слове без смысловой точки.'
+        ].join('\n\n'),
+        [
+          'Страница 2. Контекст и омографы в русском учебном тексте.',
+          'Он носит берет. Он берет книгу со стола. Завтра он узнает результат лабораторного анализа. Она узнает его по голосу.',
+          'Температура кипения — см. табл. 1 — зависит от внешнего атмосферного давления и чистоты раствора.',
+          'При чтении PDF-документов важно корректно обрабатывать сокращения вроде т. е., и т. д., стр. 15 и не терять синхронизацию подсветки слов.'
+        ].join('\n\n'),
+        [
+          'Страница 3. Поиск по странице, словарь произношения и экспорт.',
+          'Воспользуйтесь строкой поиска над областью чтения, чтобы найти нужный термин на странице и перейти к совпадению без остановки озвучивания.',
+          'В панели «Словарь произношения» вы можете добавить собственные однословные или многословные правила замены и предварительно прослушать их.'
+        ].join('\n\n')
+      ];
+
+      // =========================================================================
+      // МОДУЛЬ 1. ПОДГОТОВКА РУССКОГО ТЕКСТА И ЧИСЛОВЫЕ ПРАВИЛА (TextNormalizer)
+      // =========================================================================
+      const TextNormalizer = (function () {
+        // Однозначные слова с буквой «ё» (без омографов вроде берет/берёт, узнает/узнаёт, все/всё)
+        const UNAMBIGUOUS_YO_WORDS = {
+          'еще': 'ещё', 'трех': 'трёх', 'четырех': 'четырёх',
+          'объем': 'объём', 'объема': 'объёма', 'объему': 'объёму', 'объемом': 'объёмом', 'объеме': 'объёме', 'объемы': 'объёмы', 'объемов': 'объёмов',
+          'расчет': 'расчёт', 'расчета': 'расчёта', 'расчету': 'расчёту', 'расчетом': 'расчётом', 'расчете': 'расчёте', 'расчеты': 'расчёты', 'расчетов': 'расчётов',
+          'отчет': 'отчёт', 'отчета': 'отчёта', 'отчеты': 'отчёты', 'учет': 'учёт', 'учета': 'учёта',
+          'включен': 'включён', 'включенный': 'включённый', 'защищен': 'защищён', 'защищенный': 'защищённый',
+          'сохранен': 'сохранён', 'сохраненной': 'сохранённой', 'сохраненную': 'сохранённую',
+          'извлечен': 'извлечён', 'извлеченный': 'извлечённый', 'переведен': 'переведён',
+          'проведен': 'проведён', 'приведен': 'приведён', 'разделен': 'разделён', 'определен': 'определён',
+          'темный': 'тёмный', 'темная': 'тёмная', 'темное': 'тёмное', 'темном': 'тёмном',
+          'теплый': 'тёплый', 'теплая': 'тёплая', 'теплое': 'тёплое',
+          'желтый': 'жёлтый', 'желтая': 'жёлтая', 'желтым': 'жёлтым',
+          'четкий': 'чёткий', 'четкая': 'чёткая', 'четкое': 'чёткое'
+        };
+
+        // Безопасные однословные сокращения и аббревиатуры
+        const SINGLE_ABBREVIATIONS = {
+          'см.': 'смотри', 'рис.': 'рисунок', 'табл.': 'таблица', 'стр.': 'страница', 'гл.': 'глава',
+          'разд.': 'раздел', 'п.': 'пункт', 'пп.': 'пункты', 'др.': 'другие', 'пр.': 'прочее',
+          'руб.': 'рублей', 'тыс.': 'тысяч', 'млн': 'миллионов', 'млн.': 'миллионов', 'млрд': 'миллиардов', 'млрд.': 'миллиардов',
+          'т.е.': 'то есть', 'т.д.': 'так далее', 'т.п.': 'тому подобное', 'т.к.': 'так как', 'т.н.': 'так называемый',
+          'pdf': 'пэ-дэ-эф', 'pdf-файл': 'пэ-дэ-эф файл', 'pdf-файла': 'пэ-дэ-эф файла', 'pdf-файлы': 'пэ-дэ-эф файлы',
+          'pdf-документ': 'пэ-дэ-эф документ', 'pdf-документов': 'пэ-дэ-эф документов', 'pdf.js': 'пэ-дэ-эф джей-эс',
+          'txt': 'тэ-икс-тэ', 'html': 'аш-ти-эм-эль', 'html5': 'аш-ти-эм-эль пять', 'css': 'си-эс-эс', 'css3': 'си-эс-эс три',
+          'api': 'эй-пи-ай', 'ios': 'ай-о-эс', 'iphone': 'айфон', 'ipad': 'айпад', 'safari': 'сафари',
+          'wi-fi': 'вай-фай', 'usb': 'ю-эс-би', 'url': 'ю-эр-эл'
+        };
+
+        // Многословные встроенные сокращения
+        const BUILTIN_MULTIWORD_RULES = [
+          { tokens: ['и', 'т.', 'д.'], replacement: 'и так далее' },
+          { tokens: ['и', 'т.', 'п.'], replacement: 'и тому подобное' },
+          { tokens: ['в', 'т.', 'ч.'], replacement: 'в том числе' },
+          { tokens: ['до', 'н.', 'э.'], replacement: 'до нашей эры' },
+          { tokens: ['т.', 'е.'], replacement: 'то есть' },
+          { tokens: ['т.', 'д.'], replacement: 'так далее' },
+          { tokens: ['т.', 'п.'], replacement: 'тому подобное' },
+          { tokens: ['т.', 'к.'], replacement: 'так как' },
+          { tokens: ['т.', 'н.'], replacement: 'так называемый' },
+          { tokens: ['н.', 'э.'], replacement: 'нашей эры' },
+          { tokens: ['и', 'др.'], replacement: 'и другие' },
+          { tokens: ['и', 'пр.'], replacement: 'и прочее' }
+        ];
+
+        // Единицы измерения: [им. ед., род. ед., род. мн.]
+        const UNITS_DECLENSION = {
+          'мг': { gender: 'm', forms: ['миллиграмм', 'миллиграмма', 'миллиграммов'] },
+          'г': { gender: 'm', forms: ['грамм', 'грамма', 'граммов'] },
+          'кг': { gender: 'm', forms: ['килограмм', 'килограмма', 'килограммов'] },
+          'мкг': { gender: 'm', forms: ['микрограмм', 'микрограмма', 'микрограммов'] },
+          'мл': { gender: 'm', forms: ['миллилитр', 'миллилитра', 'миллилитров'] },
+          'л': { gender: 'm', forms: ['литр', 'литра', 'литров'] },
+          'мм': { gender: 'm', forms: ['миллиметр', 'миллиметра', 'миллиметров'] },
+          'см': { gender: 'm', forms: ['сантиметр', 'сантиметра', 'сантиметров'] },
+          'м': { gender: 'm', forms: ['метр', 'метра', 'метров'] },
+          'км': { gender: 'm', forms: ['километр', 'километра', 'километров'] },
+          'с': { gender: 'f', forms: ['секунда', 'секунды', 'секунд'] },
+          'сек': { gender: 'f', forms: ['секунда', 'секунды', 'секунд'] },
+          'сек.': { gender: 'f', forms: ['секунда', 'секунды', 'секунд'] },
+          'мин': { gender: 'f', forms: ['минута', 'минуты', 'минут'] },
+          'мин.': { gender: 'f', forms: ['минута', 'минуты', 'минут'] },
+          'ч': { gender: 'm', forms: ['час', 'часа', 'часов'] },
+          'ч.': { gender: 'm', forms: ['час', 'часа', 'часов'] },
+          'гц': { gender: 'm', forms: ['герц', 'герца', 'герц'] },
+          'кгц': { gender: 'm', forms: ['килогерц', 'килогерца', 'килогерц'] },
+          'мгц': { gender: 'm', forms: ['мегагерц', 'мегагерца', 'мегагерц'] },
+          'кб': { gender: 'm', forms: ['килобайт', 'килобайта', 'килобайт'] },
+          'мб': { gender: 'm', forms: ['мегабайт', 'мегабайта', 'мегабайт'] },
+          'гб': { gender: 'm', forms: ['гигабайт', 'гигабайта', 'гигабайт'] },
+          'руб': { gender: 'm', forms: ['рубль', 'рубля', 'рублей'] },
+          'руб.': { gender: 'm', forms: ['рубль', 'рубля', 'рублей'] },
+          '%': { gender: 'm', forms: ['процент', 'процента', 'процентов'] }
+        };
+
+        const ROMAN_MAP = {
+          'I': { cardinal: 'один', ordinalPrepFem: 'первой', ordinalNomMasc: 'первый', ordinalPrepMasc: 'первом' },
+          'II': { cardinal: 'два', ordinalPrepFem: 'второй', ordinalNomMasc: 'второй', ordinalPrepMasc: 'втором' },
+          'III': { cardinal: 'три', ordinalPrepFem: 'третьей', ordinalNomMasc: 'третий', ordinalPrepMasc: 'третьем' },
+          'IV': { cardinal: 'четыре', ordinalPrepFem: 'четвёртой', ordinalNomMasc: 'четвёртый', ordinalPrepMasc: 'четвёртом' },
+          'V': { cardinal: 'пять', ordinalPrepFem: 'пятой', ordinalNomMasc: 'пятый', ordinalPrepMasc: 'пятом' },
+          'VI': { cardinal: 'шесть', ordinalPrepFem: 'шестой', ordinalNomMasc: 'шестой', ordinalPrepMasc: 'шестом' },
+          'VII': { cardinal: 'семь', ordinalPrepFem: 'седьмой', ordinalNomMasc: 'седьмой', ordinalPrepMasc: 'седьмом' },
+          'VIII': { cardinal: 'восемь', ordinalPrepFem: 'восьмой', ordinalNomMasc: 'восьмой', ordinalPrepMasc: 'восьмом' },
+          'IX': { cardinal: 'девять', ordinalPrepFem: 'девятой', ordinalNomMasc: 'девятый', ordinalPrepMasc: 'девятом' },
+          'X': { cardinal: 'десять', ordinalPrepFem: 'десятой', ordinalNomMasc: 'десятый', ordinalPrepMasc: 'десятом' },
+          'XI': { cardinal: 'одиннадцать', ordinalPrepFem: 'одиннадцатой', ordinalNomMasc: 'одиннадцатый', ordinalPrepMasc: 'одиннадцатом' },
+          'XII': { cardinal: 'двенадцать', ordinalPrepFem: 'двенадцатой', ordinalNomMasc: 'двенадцатый', ordinalPrepMasc: 'двенадцатом' },
+          'XIII': { cardinal: 'тринадцать', ordinalPrepFem: 'тринадцатой', ordinalNomMasc: 'тринадцатый', ordinalPrepMasc: 'тринадцатом' },
+          'XIV': { cardinal: 'четырнадцать', ordinalPrepFem: 'четырнадцатой', ordinalNomMasc: 'четырнадцатый', ordinalPrepMasc: 'четырнадцатом' },
+          'XV': { cardinal: 'пятнадцать', ordinalPrepFem: 'пятнадцатой', ordinalNomMasc: 'пятнадцатый', ordinalPrepMasc: 'пятнадцатом' },
+          'XVI': { cardinal: 'шестнадцать', ordinalPrepFem: 'шестнадцатой', ordinalNomMasc: 'шестнадцатый', ordinalPrepMasc: 'шестнадцатом' },
+          'XVII': { cardinal: 'семнадцать', ordinalPrepFem: 'семнадцатой', ordinalNomMasc: 'семнадцатый', ordinalPrepMasc: 'семнадцатом' },
+          'XVIII': { cardinal: 'восемнадцать', ordinalPrepFem: 'восемнадцатой', ordinalNomMasc: 'восемнадцатый', ordinalPrepMasc: 'восемнадцатом' },
+          'XIX': { cardinal: 'девятнадцать', ordinalPrepFem: 'девятнадцатой', ordinalNomMasc: 'девятнадцатый', ordinalPrepMasc: 'девятнадцатом' },
+          'XX': { cardinal: 'двадцать', ordinalPrepFem: 'двадцатой', ordinalNomMasc: 'двадцатый', ordinalPrepMasc: 'двадцатом' },
+          'XXI': { cardinal: 'двадцать один', ordinalPrepFem: 'двадцать первой', ordinalNomMasc: 'двадцать первый', ordinalPrepMasc: 'двадцать первом' }
+        };
+
+        function integerToRussianWords(num, gender) {
+          const n = parseInt(num, 10);
+          if (isNaN(n) || n < 0 || n > 999) return String(num);
+          if (n === 0) return 'ноль';
+          const hundreds = ['', 'сто', 'двести', 'триста', 'четыреста', 'пятьсот', 'шестьсот', 'семьсот', 'восемьсот', 'девятьсот'];
+          const tens = ['', '', 'двадцать', 'тридцать', 'сорок', 'пятьдесят', 'шестьдесят', 'семьдесят', 'восемьдесят', 'девяносто'];
+          const teens = ['десять', 'одиннадцать', 'двенадцать', 'тринадцать', 'четырнадцать', 'пятнадцать', 'шестнадцать', 'семнадцать', 'восемнадцать', 'девятнадцать'];
+          const unitsMasc = ['', 'один', 'два', 'три', 'четыре', 'пять', 'шесть', 'семь', 'восемь', 'девять'];
+          const unitsFem = ['', 'одна', 'две', 'три', 'четыре', 'пять', 'шесть', 'семь', 'восемь', 'девять'];
+          const parts = [];
+          const h = Math.floor(n / 100);
+          const rem = n % 100;
+          if (h > 0) parts.push(hundreds[h]);
+          if (rem >= 10 && rem <= 19) {
+            parts.push(teens[rem - 10]);
+          } else {
+            const t = Math.floor(rem / 10);
+            const u = rem % 10;
+            if (t > 0) parts.push(tens[t]);
+            if (u > 0) parts.push(gender === 'f' ? unitsFem[u] : unitsMasc[u]);
+          }
+          return parts.join(' ');
+        }
+
+        function selectPluralForm(intVal, forms) {
+          const n = Math.abs(parseInt(intVal, 10));
+          const mod100 = n % 100;
+          const mod10 = n % 10;
+          if (mod100 >= 11 && mod100 <= 14) return forms[2];
+          if (mod10 === 1) return forms[0];
+          if (mod10 >= 2 && mod10 <= 4) return forms[1];
+          return forms[2];
+        }
+
+        function splitTokenPunctuation(rawToken) {
+          const m = String(rawToken || '').match(/^([«"(\[{]*)(.*?)([»")\]}.,!?;:…]*)$/);
+          return m ? { prefix: m[1] || '', core: m[2] || '', suffix: m[3] || '' } : { prefix: '', core: String(rawToken || ''), suffix: '' };
+        }
+
+        const KEEP_HYPHEN_PREFIXES = new Set([
+          'по', 'во', 'в', 'ко', 'из', 'под', 'над', 'за', 'то', 'либо', 'нибудь', 'кое', 'кой',
+          'санкт', 'нью', 'лос', 'риу', 'аль', 'экс', 'вице', 'лейб', 'унтер', 'штаб', 'гамма', 'альфа', 'бета'
+        ]);
+
+        function mergeLineHyphenation(lineA, lineB) {
+          const a = (lineA || '').replace(/\u00AD/g, '').trimEnd();
+          const b = (lineB || '').replace(/\u00AD/g, '').trimStart();
+          if (!a || !b) return a + (a && b ? ' ' : '') + b;
+          const matchA = a.match(/^(.*?\s)?([А-ЯЁа-яёA-Za-z]{2,})-$/) || a.match(/^()([А-ЯЁа-яёA-Za-z]{2,})-$/);
+          const matchB = b.match(/^([а-яёa-z]{2,})(\s.*|$)/);
+          if (!matchA || !matchB) return a + ' ' + b;
+          const headPart = matchA[2];
+          const tailPart = matchB[1];
+          const headLower = headPart.toLowerCase();
+          if ((/[а-яё]/i.test(headPart) !== /[а-яё]/i.test(tailPart)) || KEEP_HYPHEN_PREFIXES.has(headLower)) return a + b;
+          if (/(?:ико|еко|чно|вно|льно|нно|ско|цко|ево|ово)$/i.test(headLower) && tailPart.length >= 5) return a + b;
+          return (matchA[1] || '') + headPart + tailPart + (matchB[2] || '');
+        }
+
+        function buildOrderedMultiwordRules(customDict) {
+          const rules = [];
+          if (customDict && typeof customDict === 'object') {
+            Object.entries(customDict).forEach(([key, val]) => {
+              const cleanKey = (key || '').trim().toLowerCase();
+              const cleanVal = (val || '').trim();
+              if (cleanKey && cleanVal) rules.push({ tokens: cleanKey.split(/\s+/), replacement: cleanVal, isUser: true });
+            });
+          }
+          BUILTIN_MULTIWORD_RULES.forEach((r) => rules.push({ tokens: r.tokens, replacement: r.replacement, isUser: false }));
+          return rules.sort((a, b) => (b.tokens.length - a.tokens.length) || (a.isUser === b.isUser ? 0 : (a.isUser ? -1 : 1)));
+        }
+
+        function buildSpokenSegmentWithMap(segmentTokens, options) {
+          const smartEnabled = options && options.smartPronunciation !== false;
+          const customDict = (options && options.customDict) || {};
+          const multiRules = smartEnabled ? buildOrderedMultiwordRules(customDict) : [];
+          const emittedPieces = [];
+          const emit = (spoken, tokenStartIdx, tokenEndIdx = tokenStartIdx) => {
+            emittedPieces.push({ spoken, tokenStartIdx, tokenEndIdx });
+          };
+          const n = segmentTokens.length;
+          let i = 0;
+
+          while (i < n) {
+            const tok = segmentTokens[i];
+            const parts = splitTokenPunctuation(tok.text);
+            const coreWithDot = (parts.core + (parts.suffix.startsWith('.') ? '.' : '')).toLowerCase();
+            const coreLower = parts.core.toLowerCase();
+
+            if (!smartEnabled) {
+              emit(tok.text, tok.index);
+              i++;
+              continue;
+            }
+
+            // 1. Многословные и однословные правила (longest-match-first, приоритет у пользовательских)
+            let matchedRule = null;
+            for (let r = 0; r < multiRules.length; r++) {
+              const rule = multiRules[r];
+              const len = rule.tokens.length;
+              if (i + len > n) continue;
+              let allMatch = true;
+              for (let k = 0; k < len; k++) {
+                const cand = splitTokenPunctuation(segmentTokens[i + k].text);
+                const candWithDot = (cand.core + (cand.suffix.startsWith('.') ? '.' : '')).toLowerCase();
+                const candLower = cand.core.toLowerCase();
+                const target = rule.tokens[k];
+                if (target.endsWith('.') ? (candWithDot !== target && candLower !== target) : (candLower !== target)) {
+                  allMatch = false;
+                  break;
+                }
+              }
+              if (allMatch) {
+                matchedRule = rule;
+                break;
+              }
+            }
+
+            if (matchedRule) {
+              const len = matchedRule.tokens.length;
+              const firstParts = splitTokenPunctuation(segmentTokens[i].text);
+              const lastParts = splitTokenPunctuation(segmentTokens[i + len - 1].text);
+              const lastRuleTok = matchedRule.tokens[len - 1];
+              const remainingSuffix = (lastRuleTok.endsWith('.') && lastParts.suffix.startsWith('.')) ? lastParts.suffix.slice(1) : lastParts.suffix;
+              emit(firstParts.prefix + matchedRule.replacement + remainingSuffix, segmentTokens[i].index, segmentTokens[i + len - 1].index);
+              i += len;
+              continue;
+            }
+
+            // 2. Двухтокенные контекстные конструкции (римские цифры, годы, ссылки на рис./табл., числа с единицами)
+            if (i + 1 < n) {
+              const nextTok = segmentTokens[i + 1];
+              const nextParts = splitTokenPunctuation(nextTok.text);
+              const nextCoreLower = nextParts.core.toLowerCase();
+              const nextWithDot = (nextParts.core + (nextParts.suffix.startsWith('.') ? '.' : '')).toLowerCase();
+
+              if (/^(глав[аеыуой]|раздел[аеу]?|параграф[аеу]?|част[ьи])$/i.test(parts.core) && ROMAN_MAP[nextParts.core]) {
+                emit(parts.prefix + parts.core + ' ' + ROMAN_MAP[nextParts.core].cardinal + nextParts.suffix, tok.index, nextTok.index);
+                i += 2;
+                continue;
+              }
+              if (ROMAN_MAP[parts.core] && /^глав[еыуой]$/i.test(nextCoreLower)) {
+                emit(parts.prefix + ROMAN_MAP[parts.core].ordinalPrepFem + ' ' + nextParts.core + nextParts.suffix, tok.index, nextTok.index);
+                i += 2;
+                continue;
+              }
+              if (ROMAN_MAP[parts.core] && (nextWithDot === 'в.' || /^век[аеу]?$/i.test(nextCoreLower))) {
+                const roman = ROMAN_MAP[parts.core];
+                const prevTok = i > 0 ? splitTokenPunctuation(segmentTokens[i - 1].text).core.toLowerCase() : '';
+                const isPrep = prevTok === 'в' || prevTok === 'о' || prevTok === 'об' || nextCoreLower === 'веке';
+                const remSuf = nextWithDot === 'в.' ? nextParts.suffix.slice(1) : nextParts.suffix;
+                emit(parts.prefix + (isPrep ? roman.ordinalPrepMasc + ' веке' : roman.ordinalNomMasc + ' век') + remSuf, tok.index, nextTok.index);
+                i += 2;
+                continue;
+              }
+              if (/^\d{3,4}$/.test(parts.core) && (nextWithDot === 'г.' || nextWithDot === 'гг.')) {
+                const prevTok = i > 0 ? splitTokenPunctuation(segmentTokens[i - 1].text).core.toLowerCase() : '';
+                const remSuf = nextParts.suffix.startsWith('.') ? nextParts.suffix.slice(1) : nextParts.suffix;
+                const yearWord = nextWithDot === 'гг.' ? 'годы' : (prevTok === 'в' ? 'году' : 'год');
+                emit(parts.prefix + parts.core + ' ' + yearWord + remSuf, tok.index, nextTok.index);
+                i += 2;
+                continue;
+              }
+              if ((coreWithDot === 'рис.' || coreWithDot === 'табл.' || coreWithDot === 'стр.' || coreWithDot === 'гл.') && /^\d+$/.test(nextParts.core)) {
+                let expandedHead = SINGLE_ABBREVIATIONS[coreWithDot];
+                if (/^[А-ЯЁ]/.test(parts.core)) expandedHead = expandedHead.charAt(0).toUpperCase() + expandedHead.slice(1);
+                emit(parts.prefix + expandedHead + ' ' + integerToRussianWords(nextParts.core, 'm') + nextParts.suffix, tok.index, nextTok.index);
+                i += 2;
+                continue;
+              }
+
+              const rangeMatch = parts.core.match(/^(\d{1,3})[–—-](\d{1,3})$/);
+              const unitInfo = UNITS_DECLENSION[nextWithDot] || UNITS_DECLENSION[nextCoreLower];
+              if (unitInfo) {
+                const remSuf = (UNITS_DECLENSION[nextWithDot] && nextParts.suffix.startsWith('.')) ? nextParts.suffix.slice(1) : nextParts.suffix;
+                if (rangeMatch) {
+                  emit(parts.prefix + 'от ' + rangeMatch[1] + ' до ' + rangeMatch[2] + ' ' + unitInfo.forms[2] + remSuf, tok.index, nextTok.index);
+                  i += 2;
+                  continue;
+                }
+                if (/^\d{1,3}$/.test(parts.core)) {
+                  emit(parts.prefix + integerToRussianWords(parts.core, unitInfo.gender) + ' ' + selectPluralForm(parts.core, unitInfo.forms) + remSuf, tok.index, nextTok.index);
+                  i += 2;
+                  continue;
+                }
+                if (/^\d+[,.]\d+$/.test(parts.core)) {
+                  emit(parts.prefix + parts.core.replace('.', ',') + ' ' + unitInfo.forms[1] + remSuf, tok.index, nextTok.index);
+                  i += 2;
+                  continue;
+                }
+              }
+            }
+
+            // 3. Однотокенные проценты, спецсимволы, сокращения и однозначные слова с «ё»
+            const decPctMatch = parts.core.match(/^(\d+)[,.](\d+)%$/);
+            if (decPctMatch) {
+              emit(parts.prefix + decPctMatch[1] + ',' + decPctMatch[2] + ' процента' + parts.suffix, tok.index);
+              i++;
+              continue;
+            }
+            const rangePctMatch = parts.core.match(/^(\d{1,3})[–—-](\d{1,3})%$/);
+            if (rangePctMatch) {
+              emit(parts.prefix + 'от ' + rangePctMatch[1] + ' до ' + rangePctMatch[2] + ' процентов' + parts.suffix, tok.index);
+              i++;
+              continue;
+            }
+            const intPctMatch = parts.core.match(/^(\d{1,3})%$/);
+            if (intPctMatch) {
+              emit(parts.prefix + integerToRussianWords(intPctMatch[1], 'm') + ' ' + selectPluralForm(intPctMatch[1], UNITS_DECLENSION['%'].forms) + parts.suffix, tok.index);
+              i++;
+              continue;
+            }
+
+            if (parts.core === '№' || parts.core === '§') {
+              emit(parts.core === '№' ? 'номер' : 'параграф', tok.index);
+              i++;
+              continue;
+            }
+            if (parts.suffix.startsWith('.') && SINGLE_ABBREVIATIONS[coreWithDot]) {
+              let expAbbr = SINGLE_ABBREVIATIONS[coreWithDot];
+              if (/^[А-ЯЁ]/.test(parts.core) && expAbbr.length > 1) expAbbr = expAbbr.charAt(0).toUpperCase() + expAbbr.slice(1);
+              emit(parts.prefix + expAbbr + parts.suffix.slice(1), tok.index);
+              i++;
+              continue;
+            }
+            if (SINGLE_ABBREVIATIONS[coreLower]) {
+              emit(parts.prefix + SINGLE_ABBREVIATIONS[coreLower] + parts.suffix, tok.index);
+              i++;
+              continue;
+            }
+            if (UNAMBIGUOUS_YO_WORDS[coreLower]) {
+              let yoWord = UNAMBIGUOUS_YO_WORDS[coreLower];
+              if (/^[А-ЯЁ]/.test(parts.core)) yoWord = yoWord.charAt(0).toUpperCase() + yoWord.slice(1);
+              emit(parts.prefix + yoWord + parts.suffix, tok.index);
+              i++;
+              continue;
+            }
+
+            emit(tok.text, tok.index);
+            i++;
+          }
+
+          const charMap = [];
+          const spokenChunks = [];
+          let cursor = 0;
+          for (let p = 0; p < emittedPieces.length; p++) {
+            const piece = emittedPieces[p];
+            const start = cursor;
+            const end = start + piece.spoken.length;
+            charMap.push({ charStart: start, charEnd: end, tokenStartIdx: piece.tokenStartIdx, tokenEndIdx: piece.tokenEndIdx, spoken: piece.spoken });
+            spokenChunks.push(piece.spoken);
+            cursor = end + 1;
+          }
+
+          return { utteranceText: spokenChunks.join(' '), charMap: charMap };
+        }
+
+        return {
+          mergeLineHyphenation: mergeLineHyphenation,
+          splitTokenPunctuation: splitTokenPunctuation,
+          buildSpokenSegmentWithMap: buildSpokenSegmentWithMap
+        };
+      })();
+
+      // =========================================================================
+      // МОДУЛЬ 2. СЕГМЕНТАЦИЯ ПРЕДЛОЖЕНИЙ С УЧЁТОМ СОКРАЩЕНИЙ (SentenceSegmenter)
+      // =========================================================================
+      const SentenceSegmenter = (function () {
+        const NON_TERMINAL_ABBR = new Set([
+          'см.', 'рис.', 'табл.', 'стр.', 'с.', 'гл.', 'разд.', 'п.', 'пп.',
+          'им.', 'акад.', 'проф.', 'доц.', 'канд.', 'ул.', 'пр-т.', 'обл.',
+          'р-н.', 'корп.', 'кв.', 'тел.', 'руб.', 'коп.', 'тыс.', 'млн.', 'млрд.',
+          'т.', 'т.е.', 'т.к.', 'т.н.', 'в.', 'вв.'
+        ]);
+        const CONTEXTUAL_END_ABBR = new Set(['г.', 'гг.', 'д.', 'п.', 'др.', 'пр.', 'э.', 'ч.']);
+
+        function isSentenceBoundaryAfterToken(tokens, idx) {
+          const curr = tokens[idx];
+          if (!curr) return false;
+          const raw = curr.text;
+          if (/[!?…]+["»)\]]*$/.test(raw)) return true;
+          if (!/\.+["»)\]]*$/.test(raw)) return false;
+
+          const cleanLower = raw.replace(/["»)\]]+$/g, '').toLowerCase();
+          const nextTok = idx + 1 < tokens.length ? tokens[idx + 1] : null;
+          if (!nextTok) return true;
+
+          const nextClean = nextTok.text.replace(/^[«"(\[{]+/, '');
+          if (/^[а-яёa-z0-9—–-]/.test(nextClean) || NON_TERMINAL_ABBR.has(cleanLower) || cleanLower === 'т.' || cleanLower === 'н.') {
+            return false;
+          }
+          if (/^[А-ЯЁA-Z]\.$/.test(raw.replace(/^[«"(\[{]+/, '')) && (/^[А-ЯЁA-Z]\.$/.test(nextClean) || /^[А-ЯЁA-Z][а-яёa-z]+/.test(nextClean))) {
+            return false;
+          }
+          if (CONTEXTUAL_END_ABBR.has(cleanLower)) {
+            return /^[А-ЯЁA-Z]/.test(nextClean);
+          }
+          return true;
+        }
+
+        function splitLongSentenceSafely(sentenceTokens, maxWords) {
+          const limit = maxWords || 55;
+          if (sentenceTokens.length <= limit) return [sentenceTokens];
+          const result = [];
+          let start = 0;
+
+          while (start < sentenceTokens.length) {
+            if (sentenceTokens.length - start <= limit) {
+              result.push(sentenceTokens.slice(start));
+              break;
+            }
+            const idealEnd = start + limit;
+            const searchMin = start + Math.floor(limit * 0.45);
+            const searchMax = Math.min(sentenceTokens.length - 2, start + limit + 10);
+            let bestSplit = -1;
+            let bestPriority = 0;
+
+            for (let k = searchMin; k <= searchMax; k++) {
+              const t = sentenceTokens[k].text;
+              const nextT = sentenceTokens[k + 1] ? sentenceTokens[k + 1].text : '';
+              const priority = /[;:]$/.test(t) ? 3 : (/^[—–]$/.test(nextT) ? 2 : (/,$/.test(t) ? 1 : 0));
+              if (priority > bestPriority || (priority === bestPriority && priority > 0 && Math.abs(k - idealEnd) < Math.abs(bestSplit - idealEnd))) {
+                bestPriority = priority;
+                bestSplit = k;
+              }
+            }
+            if (bestSplit === -1) bestSplit = start + limit - 1;
+            result.push(sentenceTokens.slice(start, bestSplit + 1));
+            start = bestSplit + 1;
+          }
+          return result;
+        }
+
+        function segmentParagraphTokens(paragraphTokens, maxSentenceWords) {
+          const sentences = [];
+          let current = [];
+          const flush = () => {
+            if (current.length > 0) {
+              splitLongSentenceSafely(current, maxSentenceWords || 55).forEach((ch) => sentences.push(ch));
+              current = [];
+            }
+          };
+          for (let i = 0; i < paragraphTokens.length; i++) {
+            current.push(paragraphTokens[i]);
+            if (isSentenceBoundaryAfterToken(paragraphTokens, i)) flush();
+          }
+          flush();
+          return sentences;
+        }
+
+        return {
+          segmentParagraphTokens: segmentParagraphTokens,
+          isSentenceBoundaryAfterToken: isSentenceBoundaryAfterToken
+        };
+      })();
+
+      // =========================================================================
+      // МОДУЛЬ 3. ВОССТАНОВЛЕНИЕ СТРУКТУРЫ ТЕКСТА ИЗ PDF.JS (PdfStructureExtractor)
+      // =========================================================================
+      const PdfStructureExtractor = (function () {
+        function reconstructParagraphsFromItems(items) {
+          if (!items || items.length === 0) return [];
+          const fragments = [];
+          for (let i = 0; i < items.length; i++) {
+            const item = items[i];
+            const str = (item.str || '').replace(/\u00AD/g, '');
+            if (!str.trim() && !item.hasEOL) continue;
+            const tr = item.transform || [12, 0, 0, 12, 0, 0];
+            const x = tr[4] || 0;
+            const y = tr[5] || 0;
+            const fontH = Math.hypot(tr[2] || 0, tr[3] || 12) || 12;
+            fragments.push({ str, x, y, fontH, width: item.width || (str.length * fontH * 0.5), hasEOL: !!item.hasEOL });
+          }
+          if (fragments.length === 0) return [];
+
+          const lines = [];
+          let currLine = null;
+          for (let i = 0; i < fragments.length; i++) {
+            const f = fragments[i];
+            if (!currLine) {
+              currLine = { text: f.str, y: f.y, startX: f.x, endX: f.x + f.width, fontH: f.fontH };
+              continue;
+            }
+            const sameLineY = Math.abs(f.y - currLine.y) <= Math.max(4, currLine.fontH * 0.45);
+            const xGap = f.x - currLine.endX;
+            const isSeparateColumn = sameLineY && (xGap > currLine.fontH * 6 || f.x < currLine.startX - currLine.fontH * 2);
+
+            if (sameLineY && !isSeparateColumn) {
+              const needSpace = currLine.text && !currLine.text.endsWith(' ') && !f.str.startsWith(' ') && xGap > currLine.fontH * 0.12;
+              currLine.text += (needSpace ? ' ' : '') + f.str;
+              currLine.endX = Math.max(currLine.endX, f.x + f.width);
+            } else {
+              if (currLine.text.trim()) lines.push(currLine);
+              currLine = { text: f.str, y: f.y, startX: f.x, endX: f.x + f.width, fontH: f.fontH };
+            }
+          }
+          if (currLine && currLine.text.trim()) lines.push(currLine);
+          if (lines.length === 0) return [];
+
+          const paragraphs = [];
+          let currParaText = lines[0].text.trim();
+          for (let i = 1; i < lines.length; i++) {
+            const prev = lines[i - 1];
+            const curr = lines[i];
+            const avgH = (prev.fontH + curr.fontH) / 2 || 12;
+            const verticalGap = Math.abs(prev.y - curr.y);
+            const isNewPara = verticalGap > avgH * 1.65 ||
+              ((curr.startX - prev.startX) > avgH * 1.4 && /[.!?;:…»"]$/.test(prev.text.trim())) ||
+              (prev.text.trim().length < 55 && !/[.,;:-]$/.test(prev.text.trim()) && verticalGap > avgH * 1.3);
+
+            if (isNewPara) {
+              if (currParaText.trim()) paragraphs.push(currParaText.trim());
+              currParaText = curr.text.trim();
+            } else {
+              currParaText = TextNormalizer.mergeLineHyphenation(currParaText, curr.text.trim());
+            }
+          }
+          if (currParaText.trim()) paragraphs.push(currParaText.trim());
+          return paragraphs;
+        }
+
+        return { reconstructParagraphsFromItems: reconstructParagraphsFromItems };
+      })();
+
+      // =========================================================================
+      // СОСТОЯНИЕ И DOM-ССЫЛКИ ПРИЛОЖЕНИЯ
+      // =========================================================================
+      const state = {
+        pdfDoc: null, isDemoDoc: false, fileKey: null, fileName: '',
+        currentPage: 1, totalPages: 0, pageRawText: '', paragraphs: [],
+        words: [], phrases: [], currentWordIndex: 0,
+        activeHighlightRange: null, selectedStartIndex: null,
+        isSpeaking: false, isPaused: false, usingApproxHighlight: false,
+        smoothReading: true, smartPronunciation: true, continuousReading: true, autoScroll: false,
+        readingPreset: 'neutral', rate: 1.0, pitch: 1.0, fontSize: 20, nightComfort: false,
+        selectedVoiceURI: '', voices: [], hasRussianVoice: false, customDict: {},
+        searchMatches: [], searchCurrentPos: -1,
+        activeUtterance: null, fallbackTimer: null, speechSessionId: 0, pageLoadRequestId: 0,
+        pendingFileBuffer: null, saveProgressTimer: null, lastSavedProgressAt: 0, sliderRestartDebounceTimer: null,
+        ttsEngine: 'sherpa-wasm',
+        maxChunkChars: 500,
+        neural: {
+          worker: null,
+          modelState: 'unloaded', // 'unloaded' | 'loading' | 'ready' | 'error'
+          isMockMode: false,
+          sampleRate: 22050,
+          numSpeakers: 1,
+          totalBytes: 0,
+          voiceName: 'vits-piper-ru_RU-irina-medium',
+          workerBusy: false,
+          requestSeq: 0,
+          activeRequestId: 0,
+          synthesizingChunkPos: null,
+          pendingStartWordIdx: null,
+          pendingSessionId: null,
+          chunks: [],
+          currentChunkPos: 0,
+          readyCache: new Map(),
+          waitingForCurrentChunk: false,
+          audioCtx: null,
+          activeSourceNode: null,
+          usingWebAudioFallback: false,
+          webAudioStartTime: 0,
+          webAudioPauseOffset: 0,
+          webAudioCurrentSamples: null,
+          webAudioCurrentSr: 22050,
+          highlightTimer: null,
+          lastElapsedMs: 0,
+          lastDurationSec: 0,
+          lastRtf: 0
+        }
+      };
+
+      const els = {};
+      [
+        'pdfFileInput', 'selectPdfBtn', 'loadDemoBtn', 'emptyStateSelectBtn', 'emptyStateDemoBtn',
+        'nightModeBtn', 'fileNameDisplay', 'statusAlert', 'statusAlertText', 'closeAlertBtn',
+        'resumeBanner', 'resumeBannerText', 'confirmResumeBtn', 'dismissResumeBtn',
+        'passwordModal', 'passwordModalHint', 'pdfPasswordInput', 'submitPasswordBtn', 'cancelPasswordBtn',
+        'playCurrentBtn', 'playCurrentBtnText', 'playFromStartBtn', 'pauseResumeBtn', 'pauseResumeBtnText', 'stopBtn',
+        'speechStateDot', 'speechEqualizer', 'readingProgressBarFill', 'speechStateLabel',
+        'voiceSelect', 'readingPresetSelect', 'voiceCountBadge', 'testVoiceBtn',
+        'rateRange', 'rateValueLabel', 'rateDecBtn', 'rateIncBtn',
+        'pitchRange', 'pitchValueLabel', 'pitchDecBtn', 'pitchIncBtn',
+        'smartPronunciationToggle', 'toggleDictModalBtn', 'pronunciationDictPanel',
+        'customDictFromInput', 'customDictToInput', 'previewDictRuleBtn', 'addCustomDictRuleBtn', 'customDictTagsContainer',
+        'toggleSelfTestBtn', 'selfTestPanel', 'runSelfTestBtn', 'selfTestResultsContainer',
+        'fontSizeRange', 'fontSizeValueLabel', 'fontDecBtn', 'fontIncBtn',
+        'smoothReadingToggle', 'continuousReadingToggle', 'autoScrollToggle', 'readingProgressText',
+        'prevPageBtn', 'nextPageBtn', 'pageNumberInput', 'totalPagesLabel', 'goToPageBtn',
+        'searchInput', 'searchCountLabel', 'searchPrevBtn', 'searchNextBtn', 'searchClearBtn',
+        'copyPageTextBtn', 'downloadPageTextBtn', 'readerScrollContainer', 'readerTextContainer',
+        'pageMetaBadge', 'toastNotification', 'toastMessage',
+        'ttsEngineSelect', 'wasmModelSizeBadge', 'loadWasmModelBtn', 'loadMockWasmBtn',
+        'wasmProgressWrap', 'wasmProgressBar', 'wasmModelStatus', 'chunkSizeInput',
+        'wasmQueueMetrics', 'wasmErrorBox', 'wasmErrorText', 'closeWasmErrorBtn', 'neuralAudioPlayer'
+      ].forEach((id) => { els[id] = document.getElementById(id); });
+
+      const synthSupported = typeof window !== 'undefined' && 'speechSynthesis' in window && 'SpeechSynthesisUtterance' in window;
+
+      // =========================================================================
+      // МОДУЛЬ 4. ХРАНИЛИЩЕ И СОХРАНЕНИЕ ПОЗИЦИИ С THROTTLING
+      // =========================================================================
+      function safeGetStorage(key) {
+        try {
+          const raw = window.localStorage.getItem(key);
+          return raw ? JSON.parse(raw) : null;
+        } catch (err) { return null; }
+      }
+
+      function safeSetStorage(key, value) {
+        try { window.localStorage.setItem(key, JSON.stringify(value)); } catch (err) {}
+      }
+
+      let toastTimeout = null;
+      function showToast(message) {
+        if (!els.toastMessage || !els.toastNotification) return;
+        els.toastMessage.textContent = message;
+        els.toastNotification.classList.remove('hidden');
+        if (toastTimeout) clearTimeout(toastTimeout);
+        toastTimeout = setTimeout(() => els.toastNotification.classList.add('hidden'), 2800);
+      }
+
+      const ALERT_STYLES = {
+        error: ['bg-rose-950/85', 'border-rose-500/50', 'text-rose-100'],
+        warning: ['bg-amber-950/85', 'border-amber-500/50', 'text-amber-100'],
+        info: ['bg-sky-950/85', 'border-sky-500/50', 'text-sky-100']
+      };
+
+      function showAlert(message, type) {
+        const cls = ALERT_STYLES[type || 'error'] || ALERT_STYLES.info;
+        els.statusAlert.classList.remove('hidden', ...ALERT_STYLES.error, ...ALERT_STYLES.warning, ...ALERT_STYLES.info);
+        els.statusAlert.classList.add(...cls);
+        els.statusAlertText.textContent = message;
+      }
+
+      function hideAlert() { els.statusAlert.classList.add('hidden'); }
+
+      function loadGlobalSettings() {
+        const saved = safeGetStorage(STORAGE_GLOBAL_KEY) || safeGetStorage(STORAGE_LEGACY_KEY);
+        if (saved) {
+          if (typeof saved.rate === 'number' && saved.rate >= 0.5 && saved.rate <= 2.0) state.rate = saved.rate;
+          if (typeof saved.pitch === 'number' && saved.pitch >= 0.7 && saved.pitch <= 1.3) state.pitch = saved.pitch;
+          if (typeof saved.fontSize === 'number' && saved.fontSize >= 14 && saved.fontSize <= 34) state.fontSize = saved.fontSize;
+          ['smoothReading', 'smartPronunciation', 'continuousReading', 'nightComfort'].forEach((k) => {
+            if (typeof saved[k] === 'boolean') state[k] = saved[k];
+          });
+          if (typeof saved.autoScrollV2 === 'boolean') state.autoScroll = saved.autoScrollV2;
+          if (saved.customDict && typeof saved.customDict === 'object') state.customDict = saved.customDict;
+          if (typeof saved.readingPreset === 'string' && READING_STYLE_PRESETS[saved.readingPreset]) state.readingPreset = saved.readingPreset;
+          if (typeof saved.selectedVoiceURI === 'string' && !saved.selectedVoiceURI.startsWith('open_preset_')) state.selectedVoiceURI = saved.selectedVoiceURI;
+          if (saved.ttsEngine === 'sherpa-wasm' || saved.ttsEngine === 'web-speech') state.ttsEngine = saved.ttsEngine;
+          if (typeof saved.maxChunkChars === 'number' && saved.maxChunkChars >= 150 && saved.maxChunkChars <= 800) {
+            state.maxChunkChars = Math.round(saved.maxChunkChars);
+          }
+        }
+        applySettingsToUI();
+      }
+
+      function saveGlobalSettings() {
+        safeSetStorage(STORAGE_GLOBAL_KEY, {
+          rate: state.rate, pitch: state.pitch, fontSize: state.fontSize,
+          smoothReading: state.smoothReading, smartPronunciation: state.smartPronunciation,
+          continuousReading: state.continuousReading, autoScrollV2: state.autoScroll,
+          nightComfort: state.nightComfort, readingPreset: state.readingPreset,
+          selectedVoiceURI: state.selectedVoiceURI, customDict: state.customDict,
+          ttsEngine: state.ttsEngine, maxChunkChars: state.maxChunkChars
+        });
+      }
+
+      function saveDocumentProgress(immediate) {
+        if (!state.fileKey) return;
+        const writeNow = () => {
+          state.lastSavedProgressAt = Date.now();
+          if (state.saveProgressTimer) { clearTimeout(state.saveProgressTimer); state.saveProgressTimer = null; }
+          safeSetStorage(STORAGE_DOC_PREFIX + state.fileKey, {
+            fileName: state.fileName, page: state.currentPage, wordIndex: state.currentWordIndex, updatedAt: state.lastSavedProgressAt
+          });
+        };
+        const elapsed = Date.now() - state.lastSavedProgressAt;
+        if (immediate || elapsed >= 2500) writeNow();
+        else if (!state.saveProgressTimer) state.saveProgressTimer = setTimeout(writeNow, 2500 - elapsed);
+      }
+
+      function getSavedDocumentProgress(fileKey) {
+        return fileKey ? safeGetStorage(STORAGE_DOC_PREFIX + fileKey) : null;
+      }
+
+      function renderCustomDictTags() {
+        if (!els.customDictTagsContainer) return;
+        els.customDictTagsContainer.textContent = '';
+        const entries = Object.entries(state.customDict || {});
+        if (entries.length === 0) {
+          const hint = document.createElement('span');
+          hint.className = 'text-slate-500 italic';
+          hint.textContent = 'Пользовательских правил пока нет. Добавьте свои сокращения или сложные термины выше.';
+          els.customDictTagsContainer.appendChild(hint);
+          return;
+        }
+        entries.forEach(([fromKey, toVal]) => {
+          const badge = document.createElement('span');
+          badge.className = 'inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-slate-900 border border-slate-700 text-slate-200';
+          const fromStrong = document.createElement('strong');
+          fromStrong.className = 'text-sky-400';
+          fromStrong.textContent = fromKey;
+          const toSpan = document.createElement('span');
+          toSpan.className = 'text-emerald-300';
+          toSpan.textContent = toVal;
+          const delBtn = document.createElement('button');
+          delBtn.type = 'button';
+          delBtn.className = 'ml-1 text-slate-400 hover:text-rose-400';
+          delBtn.textContent = '✕';
+          delBtn.setAttribute('aria-label', 'Удалить правило ' + fromKey);
+          delBtn.addEventListener('click', () => {
+            delete state.customDict[fromKey];
+            saveGlobalSettings();
+            renderCustomDictTags();
+            showToast('Правило «' + fromKey + '» удалено');
+          });
+          badge.append(fromStrong, document.createTextNode(' → '), toSpan, delBtn);
+          els.customDictTagsContainer.appendChild(badge);
+        });
+      }
+
+      function applySettingsToUI() {
+        els.rateRange.value = state.rate.toFixed(1);
+        els.rateValueLabel.textContent = state.rate.toFixed(1) + 'x';
+        if (els.pitchRange) els.pitchRange.value = state.pitch.toFixed(2);
+        if (els.pitchValueLabel) els.pitchValueLabel.textContent = state.pitch.toFixed(2);
+        if (els.readingPresetSelect) els.readingPresetSelect.value = state.readingPreset;
+        els.fontSizeRange.value = String(state.fontSize);
+        els.fontSizeValueLabel.textContent = state.fontSize + 'px';
+        els.readerTextContainer.style.fontSize = state.fontSize + 'px';
+        els.smoothReadingToggle.checked = state.smoothReading;
+        if (els.smartPronunciationToggle) els.smartPronunciationToggle.checked = state.smartPronunciation;
+        els.continuousReadingToggle.checked = state.continuousReading;
+        els.autoScrollToggle.checked = state.autoScroll;
+        if (els.ttsEngineSelect) els.ttsEngineSelect.value = state.ttsEngine;
+        if (els.chunkSizeInput) els.chunkSizeInput.value = String(state.maxChunkChars);
+        renderCustomDictTags();
+        document.body.classList.toggle('night-comfort', !!state.nightComfort);
+      }
+
+      // =========================================================================
+      // МОДУЛЬ 5. ЧЕСТНОЕ УПРАВЛЕНИЕ СИСТЕМНЫМИ ГОЛОСАМИ БРАУЗЕРА
+      // =========================================================================
+      function isRussianVoice(v) {
+        const lang = ((v && v.lang) || '').toLowerCase();
+        return lang === 'ru' || lang.startsWith('ru-') || lang.startsWith('ru_');
+      }
+
+      let missingVoiceNotified = false;
+
+      function populateVoices() {
+        const setSingleVoiceOption = (msg, badgeText) => {
+          els.voiceSelect.textContent = '';
+          const opt = document.createElement('option');
+          opt.value = '';
+          opt.textContent = msg;
+          els.voiceSelect.appendChild(opt);
+          els.voiceCountBadge.textContent = badgeText;
+        };
+
+        if (!synthSupported) {
+          setSingleVoiceOption('Синтез речи не поддерживается браузером', 'Не поддерживается');
+          showAlert('Ваш браузер не поддерживает Web Speech API (speechSynthesis). Чтение текста глазами и экспорт доступны, но озвучивание недоступно.', 'warning');
+          return;
+        }
+
+        const rawVoices = window.speechSynthesis.getVoices() || [];
+        if (rawVoices.length === 0) {
+          setSingleVoiceOption('Ожидание загрузки системных голосов...', 'Голосов: 0');
+          return;
+        }
+
+        const sorted = [...rawVoices].sort((a, b) =>
+          (isRussianVoice(b) - isRussianVoice(a)) || (Boolean(b.default) - Boolean(a.default)) || (a.name || '').localeCompare(b.name || '', 'ru')
+        );
+
+        state.voices = sorted;
+        els.voiceSelect.textContent = '';
+
+        const ruGroup = document.createElement('optgroup');
+        ruGroup.label = 'Русскоязычные голоса (ru)';
+        const otherGroup = document.createElement('optgroup');
+        otherGroup.label = 'Другие языки системы';
+
+        let ruCount = 0;
+        sorted.forEach((voice) => {
+          const ru = isRussianVoice(voice);
+          if (ru) ruCount++;
+          const option = document.createElement('option');
+          option.value = voice.voiceURI;
+          const tags = [voice.lang || 'unknown'];
+          if (voice.localService) tags.push('локальный');
+          if (voice.default) tags.push('по умолчанию');
+          option.textContent = (voice.name || voice.voiceURI) + ' (' + tags.join(', ') + ')';
+          (ru ? ruGroup : otherGroup).appendChild(option);
+        });
+
+        state.hasRussianVoice = ruCount > 0;
+        if (ruCount > 0) els.voiceSelect.appendChild(ruGroup);
+        if (otherGroup.children.length > 0) els.voiceSelect.appendChild(otherGroup);
+        els.voiceCountBadge.textContent = 'Доступно голосов: ' + sorted.length + ' (русских: ' + ruCount + ')';
+
+        if (ruCount === 0) {
+          showAlert('В вашем браузере не обнаружено русскоязычных голосов (ru). Иностранный голос не сможет корректно читать русский текст. Установите русский голосовой пакет в настройках вашей ОС.', 'warning');
+        }
+
+        const desiredURI = state.selectedVoiceURI;
+        const foundSaved = desiredURI ? sorted.find((v) => v.voiceURI === desiredURI) : null;
+        if (foundSaved) {
+          els.voiceSelect.value = foundSaved.voiceURI;
+        } else {
+          const fallbackVoice = sorted.find(isRussianVoice) || sorted.find((v) => v.default) || sorted[0];
+          if (desiredURI && !missingVoiceNotified && fallbackVoice) {
+            missingVoiceNotified = true;
+            showToast('Сохранённый ранее голос недоступен на этом устройстве. Выбран: ' + fallbackVoice.name);
+          }
+          if (fallbackVoice) {
+            state.selectedVoiceURI = fallbackVoice.voiceURI;
+            els.voiceSelect.value = fallbackVoice.voiceURI;
+            saveGlobalSettings();
+          }
+        }
+      }
+
+      function getSelectedVoiceConfig() {
+        const selectedVoice = state.voices.find((v) => v.voiceURI === state.selectedVoiceURI) || null;
+        return {
+          voice: selectedVoice,
+          lang: (selectedVoice && selectedVoice.lang) ? selectedVoice.lang : 'ru-RU',
+          pitch: state.pitch,
+          rate: state.rate,
+          voiceName: selectedVoice ? selectedVoice.name : 'Системный голос по умолчанию'
+        };
+      }
+
+      // =========================================================================
+      // МОДУЛЬ 6. ПОДСВЕТКА ТОКЕНОВ И ДИАПАЗОНОВ (O(1) БЕЗ ПОЛНОГО ОБХОДА DOM)
+      // =========================================================================
+      function removeHighlightClassesFromRange(range) {
+        if (!range) return;
+        for (let i = range.startIdx; i <= range.endIdx; i++) {
+          const w = state.words[i];
+          if (w && w.el) w.el.classList.remove('active-word', 'active-phrase-fallback', 'selected-start-word');
+        }
+      }
+
+      function clearWordHighlights() {
+        removeHighlightClassesFromRange(state.activeHighlightRange);
+        state.activeHighlightRange = null;
+        if (state.selectedStartIndex !== null) {
+          const sw = state.words[state.selectedStartIndex];
+          if (sw && sw.el) sw.el.classList.remove('selected-start-word', 'active-word');
+          state.selectedStartIndex = null;
+        }
+      }
+
+      function highlightTokenRange(startIdx, endIdx, options) {
+        if (state.words.length === 0) return;
+        const opts = options || {};
+        const shouldScroll = opts.scroll !== false;
+        const isFallbackPhrase = !!opts.isFallbackPhrase;
+        const safeStart = Math.max(0, Math.min(startIdx, state.words.length - 1));
+        const safeEnd = Math.max(safeStart, Math.min(endIdx !== undefined ? endIdx : safeStart, state.words.length - 1));
+
+        removeHighlightClassesFromRange(state.activeHighlightRange);
+        if (state.selectedStartIndex !== null) {
+          const sw = state.words[state.selectedStartIndex];
+          if (sw && sw.el) sw.el.classList.remove('selected-start-word');
+        }
+
+        state.currentWordIndex = safeStart;
+        if (state.isSpeaking) {
+          const cls = (isFallbackPhrase && safeEnd > safeStart) ? 'active-phrase-fallback' : 'active-word';
+          for (let i = safeStart; i <= safeEnd; i++) {
+            if (state.words[i] && state.words[i].el) state.words[i].el.classList.add(cls);
+          }
+          state.activeHighlightRange = { startIdx: safeStart, endIdx: safeEnd, isFallbackPhrase: isFallbackPhrase };
+        } else {
+          if (state.words[safeStart] && state.words[safeStart].el) state.words[safeStart].el.classList.add('selected-start-word');
+          state.selectedStartIndex = safeStart;
+          state.activeHighlightRange = { startIdx: safeStart, endIdx: safeStart, isFallbackPhrase: false };
+        }
+
+        const targetEl = state.words[safeStart] && state.words[safeStart].el;
+        if (shouldScroll && state.autoScroll && targetEl && els.readerScrollContainer) {
+          const container = els.readerScrollContainer;
+          const containerRect = container.getBoundingClientRect();
+          const wordRect = targetEl.getBoundingClientRect();
+          if (wordRect.top < containerRect.top + 36 || wordRect.bottom > containerRect.bottom - 36) {
+            const offsetInside = (wordRect.top - containerRect.top) + container.scrollTop;
+            container.scrollTo({ top: Math.max(0, offsetInside - container.clientHeight / 2), behavior: 'smooth' });
+          }
+        }
+
+        updateSpeechStatusUI();
+        saveDocumentProgress(false);
+      }
+
+      function highlightWord(wordIndex, scroll) {
+        highlightTokenRange(wordIndex, wordIndex, { scroll: scroll });
+      }
+
+      function updateSpeechStatusUI() {
+        const hasWords = state.words.length > 0;
+        const currentWordNum = hasWords ? Math.min(state.currentWordIndex + 1, state.words.length) : 0;
+        els.readingProgressText.textContent = hasWords ? 'слово ' + currentWordNum + ' из ' + state.words.length : 'слово 0 из 0';
+        if (els.readingProgressBarFill) {
+          els.readingProgressBarFill.style.width = (hasWords ? Math.min(100, Math.round((currentWordNum / state.words.length) * 100)) : 0) + '%';
+        }
+
+        if (state.isSpeaking && !state.isPaused) {
+          els.speechStateDot.className = 'w-2.5 h-2.5 rounded-full bg-emerald-400 animate-pulse';
+          if (els.speechEqualizer) els.speechEqualizer.className = 'speech-eq speaking text-emerald-400';
+          if (state.ttsEngine === 'sherpa-wasm') {
+            const totalCh = state.neural.chunks.length;
+            const curCh = Math.min(state.neural.currentChunkPos + 1, Math.max(1, totalCh));
+            if (state.neural.modelState === 'loading') {
+              els.speechStateLabel.textContent = 'Загрузка модели WASM...';
+            } else if (state.neural.waitingForCurrentChunk) {
+              els.speechStateLabel.textContent = 'Подготовка аудио (' + curCh + ' из ' + totalCh + ')...';
+            } else {
+              els.speechStateLabel.textContent = 'Нейро-озвучка (' + curCh + ' из ' + totalCh + ')';
+            }
+          } else {
+            els.speechStateLabel.textContent = state.usingApproxHighlight ? 'Читает (приблиз. подсветка)' : 'Идёт озвучивание...';
+          }
+          els.pauseResumeBtn.disabled = false;
+          els.pauseResumeBtnText.textContent = 'Пауза';
+          els.stopBtn.disabled = false;
+          els.playCurrentBtnText.textContent = 'Перезапустить с позиции';
+        } else if (state.isSpeaking && state.isPaused) {
+          els.speechStateDot.className = 'w-2.5 h-2.5 rounded-full bg-amber-400';
+          if (els.speechEqualizer) els.speechEqualizer.className = 'speech-eq text-amber-400';
+          els.speechStateLabel.textContent = 'На паузе';
+          els.pauseResumeBtn.disabled = false;
+          els.pauseResumeBtnText.textContent = 'Продолжить';
+          els.stopBtn.disabled = false;
+          els.playCurrentBtnText.textContent = 'Продолжить';
+        } else {
+          els.speechStateDot.className = 'w-2.5 h-2.5 rounded-full bg-slate-500';
+          if (els.speechEqualizer) els.speechEqualizer.className = 'speech-eq text-slate-500';
+          els.speechStateLabel.textContent = hasWords ? 'Готов к чтению' : 'Ожидание документа';
+          els.pauseResumeBtn.disabled = true;
+          els.pauseResumeBtnText.textContent = 'Пауза / Продолжить';
+          els.stopBtn.disabled = true;
+          els.playCurrentBtnText.textContent = state.currentWordIndex > 0 ? 'Читать с позиции' : 'Читать';
+        }
+      }
+
+      // =========================================================================
+      // МОДУЛЬ 7. ОТРИСОВКА ТЕКСТА СТРАНИЦЫ И ПОСТРОЕНИЕ СЕГМЕНТОВ
+      // =========================================================================
+      function renderPageParagraphsToDOM(paragraphsArray, rawPageText) {
+        state.pageRawText = rawPageText || (paragraphsArray || []).join('\n\n');
+        state.paragraphs = paragraphsArray || [];
+        state.words = [];
+        state.phrases = [];
+        state.activeHighlightRange = null;
+        state.selectedStartIndex = null;
+        state.searchMatches = [];
+        state.searchCurrentPos = -1;
+        els.searchCountLabel.textContent = '0/0';
+        els.readerTextContainer.textContent = '';
+        els.readerTextContainer.classList.remove('page-fade-anim');
+        void els.readerTextContainer.offsetWidth;
+        els.readerTextContainer.classList.add('page-fade-anim');
+
+        const nonEmptyParas = state.paragraphs.map((p) => p.replace(/\s+/g, ' ').trim()).filter(Boolean);
+        if (nonEmptyParas.length === 0) {
+          const emptyMsg = document.createElement('div');
+          emptyMsg.className = 'py-12 px-4 text-center space-y-2 font-sans text-amber-300';
+          const titleP = document.createElement('p');
+          titleP.className = 'text-base font-semibold';
+          titleP.textContent = 'На этой странице не обнаружено извлекаемого текстового слоя.';
+          const subP = document.createElement('p');
+          subP.className = 'text-xs text-slate-400 max-w-md mx-auto';
+          subP.textContent = 'Страница может быть отсканированным изображением. Оптическое распознавание (OCR) в браузерной версии без сервера не используется.';
+          emptyMsg.append(titleP, subP);
+          els.readerTextContainer.appendChild(emptyMsg);
+          els.pageMetaBadge.textContent = 'Страница ' + state.currentPage + ' • 0 слов';
+          updateSpeechStatusUI();
+          return;
+        }
+
+        let globalWordIndex = 0;
+        nonEmptyParas.forEach((cleanPara, pIdx) => {
+          const pEl = document.createElement('p');
+          pEl.className = 'mb-4 last:mb-0';
+          const rawTokens = cleanPara.split(' ').filter(Boolean);
+          rawTokens.forEach((tokenStr, idx) => {
+            const span = document.createElement('span');
+            span.className = 'reader-word';
+            span.textContent = tokenStr;
+            const wordIdx = globalWordIndex++;
+            span.dataset.index = String(wordIdx);
+            pEl.appendChild(span);
+            if (idx < rawTokens.length - 1) pEl.appendChild(document.createTextNode(' '));
+            state.words.push({ text: tokenStr, index: wordIdx, el: span, phraseIdx: 0, paragraphIdx: pIdx });
+          });
+          els.readerTextContainer.appendChild(pEl);
+        });
+
+        buildPhrasesFromWords();
+        els.pageMetaBadge.textContent = 'Страница ' + state.currentPage + ' из ' + state.totalPages + ' • Предложений: ' + state.phrases.length + ' • Слов: ' + state.words.length;
+        updateSpeechStatusUI();
+        if (els.searchInput.value.trim()) performSearchOnPage(els.searchInput.value.trim(), false);
+      }
+
+      function buildPhrasesFromWords() {
+        state.phrases = [];
+        if (state.words.length === 0) return;
+        const byParagraph = new Map();
+        for (let i = 0; i < state.words.length; i++) {
+          const w = state.words[i];
+          if (!byParagraph.has(w.paragraphIdx)) byParagraph.set(w.paragraphIdx, []);
+          byParagraph.get(w.paragraphIdx).push(w);
+        }
+        byParagraph.forEach((paraTokens, pIdx) => {
+          SentenceSegmenter.segmentParagraphTokens(paraTokens, 55).forEach((sentTokens) => {
+            if (!sentTokens || sentTokens.length === 0) return;
+            const phraseIdx = state.phrases.length;
+            sentTokens.forEach((w) => { w.phraseIdx = phraseIdx; });
+            state.phrases.push({ tokens: sentTokens, startWordIdx: sentTokens[0].index, endWordIdx: sentTokens[sentTokens.length - 1].index, paragraphIdx: pIdx });
+          });
+        });
+      }
+
+      // =========================================================================
+      // МОДУЛЬ 7B. ПОСТРОЕНИЕ ОЧЕРЕДИ ФРАГМЕНТОВ БЕЗ ЛИМИТА НА ДЛИНУ ДОКУМЕНТА
+      // =========================================================================
+      const ChunkQueueBuilder = (function () {
+        function sanitizeForNeuralTts(text) {
+          return String(text || '')
+            .replace(/[\u{1F600}-\u{1F64F}\u{1F300}-\u{1F5FF}\u{1F680}-\u{1F6FF}\u{2600}-\u{26FF}\u{2700}-\u{27BF}]/gu, '')
+            .replace(/\s+/g, ' ')
+            .trim();
+        }
+
+        // Делит массив нормализованных кусков одного предложения на части <= maxChunkChars
+        // по знакам препинания (; : — ,) или пробелам между словами, не разрывая слова
+        function splitEmittedPiecesByCharLimit(pieces, maxChunkChars) {
+          const limit = Math.max(50, Number(maxChunkChars) || 500);
+          const expandedPieces = [];
+
+          for (let i = 0; i < pieces.length; i++) {
+            const p = pieces[i];
+            const cleanSpoken = sanitizeForNeuralTts(p.spoken);
+            if (!cleanSpoken) continue;
+
+            if (cleanSpoken.length <= limit) {
+              expandedPieces.push({
+                spoken: cleanSpoken,
+                tokenStartIdx: p.tokenStartIdx,
+                tokenEndIdx: p.tokenEndIdx
+              });
+            } else {
+              // Если отдельная многословная замена или сверхдлинное слово без пробелов превышает лимит:
+              // сначала пробуем разбить по пробелам внутри замены, затем по дефисам, и только в крайнем случае по границе limit
+              const subWords = cleanSpoken.split(' ').filter(Boolean);
+              if (subWords.length > 1) {
+                for (let sw = 0; sw < subWords.length; sw++) {
+                  const wStr = subWords[sw];
+                  if (wStr.length <= limit) {
+                    expandedPieces.push({
+                      spoken: wStr,
+                      tokenStartIdx: p.tokenStartIdx,
+                      tokenEndIdx: p.tokenEndIdx
+                    });
+                  } else {
+                    for (let pos = 0; pos < wStr.length; pos += limit) {
+                      expandedPieces.push({
+                        spoken: wStr.slice(pos, pos + limit),
+                        tokenStartIdx: p.tokenStartIdx,
+                        tokenEndIdx: p.tokenEndIdx
+                      });
+                    }
+                  }
+                }
+              } else {
+                for (let pos = 0; pos < cleanSpoken.length; pos += limit) {
+                  expandedPieces.push({
+                    spoken: cleanSpoken.slice(pos, pos + limit),
+                    tokenStartIdx: p.tokenStartIdx,
+                    tokenEndIdx: p.tokenEndIdx
+                  });
+                }
+              }
+            }
+          }
+
+          if (expandedPieces.length === 0) return [];
+
+          const groups = [];
+          let startIdx = 0;
+
+          while (startIdx < expandedPieces.length) {
+            let accLen = 0;
+            let maxEndIdx = startIdx;
+
+            for (let k = startIdx; k < expandedPieces.length; k++) {
+              const addLen = (k === startIdx ? 0 : 1) + expandedPieces[k].spoken.length;
+              if (accLen + addLen <= limit) {
+                accLen += addLen;
+                maxEndIdx = k;
+              } else {
+                break;
+              }
+            }
+
+            if (maxEndIdx === expandedPieces.length - 1) {
+              groups.push(expandedPieces.slice(startIdx));
+              break;
+            }
+
+            // Ищем лучшую точку разрыва по знакам препинания во второй половине окна [startIdx .. maxEndIdx]
+            let bestSplitIdx = maxEndIdx;
+            if (maxEndIdx > startIdx) {
+              const minSearchIdx = startIdx + Math.floor((maxEndIdx - startIdx) * 0.45);
+              let bestPriority = 0;
+              for (let k = maxEndIdx; k >= minSearchIdx; k--) {
+                const textK = expandedPieces[k].spoken;
+                const nextText = expandedPieces[k + 1] ? expandedPieces[k + 1].spoken : '';
+                const priority =
+                  /[.!?;:…]$/.test(textK) ? 4 :
+                  (/^[—–-]$/.test(nextText) || /[—–)]$/.test(textK)) ? 3 :
+                  /,$/.test(textK) ? 2 : 0;
+                if (priority > bestPriority) {
+                  bestPriority = priority;
+                  bestSplitIdx = k;
+                  if (priority >= 4) break;
+                }
+              }
+            }
+
+            groups.push(expandedPieces.slice(startIdx, bestSplitIdx + 1));
+            startIdx = bestSplitIdx + 1;
+          }
+
+          return groups.map(function (group) {
+            const charMap = [];
+            const spokenParts = [];
+            let cursor = 0;
+            for (let i = 0; i < group.length; i++) {
+              const item = group[i];
+              const s = cursor;
+              const e = s + item.spoken.length;
+              charMap.push({
+                charStart: s,
+                charEnd: e,
+                tokenStartIdx: item.tokenStartIdx,
+                tokenEndIdx: item.tokenEndIdx,
+                spoken: item.spoken
+              });
+              spokenParts.push(item.spoken);
+              cursor = e + 1;
+            }
+            return {
+              text: spokenParts.join(' '),
+              charMap: charMap,
+              startWordIdx: group[0].tokenStartIdx,
+              endWordIdx: group[group.length - 1].tokenEndIdx
+            };
+          });
+        }
+
+        function mergeTwoSubSegments(segA, segB) {
+          const offset = segA.text.length + 1;
+          const mergedMap = segA.charMap.slice();
+          for (let i = 0; i < segB.charMap.length; i++) {
+            const m = segB.charMap[i];
+            mergedMap.push({
+              charStart: m.charStart + offset,
+              charEnd: m.charEnd + offset,
+              tokenStartIdx: m.tokenStartIdx,
+              tokenEndIdx: m.tokenEndIdx,
+              spoken: m.spoken
+            });
+          }
+          return {
+            text: segA.text + ' ' + segB.text,
+            charMap: mergedMap,
+            startWordIdx: segA.startWordIdx,
+            endWordIdx: segB.endWordIdx,
+            paragraphIdx: segA.paragraphIdx
+          };
+        }
+
+        function buildChunksFromWordIndex(words, phrases, startWordIdx, options) {
+          if (!words || words.length === 0) return [];
+          const opts = options || {};
+          const limit = Math.max(50, Number(opts.maxChunkChars) || 500);
+          const safeStart = Math.max(0, Math.min(startWordIdx || 0, words.length - 1));
+
+          // Если массив phrases не инициализирован, строим предложения на лету
+          let activePhrases = phrases;
+          if (!activePhrases || activePhrases.length === 0) {
+            activePhrases = [];
+            const byPara = new Map();
+            for (let i = 0; i < words.length; i++) {
+              const w = words[i];
+              const pIdx = w.paragraphIdx || 0;
+              if (!byPara.has(pIdx)) byPara.set(pIdx, []);
+              byPara.get(pIdx).push(w);
+            }
+            byPara.forEach(function (pTokens, pIdx) {
+              SentenceSegmenter.segmentParagraphTokens(pTokens, 55).forEach(function (sTokens) {
+                if (sTokens && sTokens.length > 0) {
+                  activePhrases.push({
+                    tokens: sTokens,
+                    startWordIdx: sTokens[0].index,
+                    endWordIdx: sTokens[sTokens.length - 1].index,
+                    paragraphIdx: pIdx
+                  });
+                }
+              });
+            });
+          }
+
+          const sentenceUnits = [];
+          for (let p = 0; p < activePhrases.length; p++) {
+            const ph = activePhrases[p];
+            if (ph.endWordIdx < safeStart) continue;
+            const sliceStart = Math.max(safeStart, ph.startWordIdx);
+            const sliceTokens = words.slice(sliceStart, ph.endWordIdx + 1);
+            if (sliceTokens.length === 0) continue;
+
+            const prepared = TextNormalizer.buildSpokenSegmentWithMap(sliceTokens, {
+              smartPronunciation: opts.smartPronunciation !== false,
+              customDict: opts.customDict || {}
+            });
+            if (!prepared.charMap || prepared.charMap.length === 0) continue;
+
+            const subSegments = splitEmittedPiecesByCharLimit(prepared.charMap, limit);
+            for (let s = 0; s < subSegments.length; s++) {
+              subSegments[s].paragraphIdx = ph.paragraphIdx || 0;
+              sentenceUnits.push(subSegments[s]);
+            }
+          }
+
+          if (sentenceUnits.length === 0) return [];
+
+          // Группируем короткие соседние предложения внутри одного абзаца до limit символов,
+          // но первый фрагмент оставляем равным первому предложению для минимальной задержки старта чтения
+          const finalChunks = [];
+          let current = sentenceUnits[0];
+
+          if (sentenceUnits.length > 1) {
+            finalChunks.push(current);
+            current = sentenceUnits[1];
+            for (let i = 2; i < sentenceUnits.length; i++) {
+              const nextUnit = sentenceUnits[i];
+              const sameParagraph = nextUnit.paragraphIdx === current.paragraphIdx;
+              const combinedLen = current.text.length + 1 + nextUnit.text.length;
+              if (sameParagraph && combinedLen <= limit) {
+                current = mergeTwoSubSegments(current, nextUnit);
+              } else {
+                finalChunks.push(current);
+                current = nextUnit;
+              }
+            }
+            finalChunks.push(current);
+          } else {
+            finalChunks.push(current);
+          }
+
+          return finalChunks.map(function (ch, idx) {
+            return {
+              chunkIndex: idx,
+              paragraphIdx: ch.paragraphIdx || 0,
+              startWordIdx: ch.startWordIdx,
+              endWordIdx: ch.endWordIdx,
+              text: ch.text,
+              charMap: ch.charMap
+            };
+          });
+        }
+
+        function buildChunksFromRawText(rawText, options) {
+          const opts = options || {};
+          const rawParas = String(rawText || '').split(/\n\s*\n+/).map((p) => p.trim()).filter(Boolean);
+          const tempWords = [];
+          let globalIdx = 0;
+          rawParas.forEach(function (para, pIdx) {
+            const cleanPara = para.replace(/\s+/g, ' ').trim();
+            if (!cleanPara) return;
+            cleanPara.split(' ').filter(Boolean).forEach(function (tok) {
+              tempWords.push({
+                text: tok,
+                index: globalIdx++,
+                paragraphIdx: pIdx
+              });
+            });
+          });
+          return {
+            words: tempWords,
+            chunks: buildChunksFromWordIndex(tempWords, null, 0, opts)
+          };
+        }
+
+        return {
+          sanitizeForNeuralTts: sanitizeForNeuralTts,
+          splitEmittedPiecesByCharLimit: splitEmittedPiecesByCharLimit,
+          buildChunksFromWordIndex: buildChunksFromWordIndex,
+          buildChunksFromRawText: buildChunksFromRawText
+        };
+      })();
+
+      // =========================================================================
+      // МОДУЛЬ 8. УПРАВЛЕНИЕ СЕССИЕЙ СИНТЕЗА, ОЧЕРЕДЬЮ SHERPA-ONNX И ПОДСВЕТКОЙ
+      // =========================================================================
+      function formatMegabytes(bytes) {
+        if (!Number.isFinite(bytes) || bytes <= 0) return '0 МБ';
+        return (bytes / (1024 * 1024)).toFixed(1) + ' МБ';
+      }
+
+      function showWasmError(message, details) {
+        if (!els.wasmErrorBox || !els.wasmErrorText) return;
+        els.wasmErrorBox.classList.remove('hidden');
+        els.wasmErrorText.textContent = details ? (message + '\nПодробности: ' + details) : message;
+      }
+
+      function hideWasmError() {
+        if (!els.wasmErrorBox || !els.wasmErrorText) return;
+        els.wasmErrorBox.classList.add('hidden');
+        els.wasmErrorText.textContent = '';
+      }
+
+      function updateWasmQueueMetricsUI() {
+        if (!els.wasmQueueMetrics) return;
+        const n = state.neural;
+        const total = n.chunks.length;
+        const cur = total > 0 ? Math.min(n.currentChunkPos + 1, total) : 0;
+        const genStr = n.lastElapsedMs > 0
+          ? ((n.lastElapsedMs / 1000).toFixed(2) + ' с (RTF ' + n.lastRtf.toFixed(2) + ')')
+          : '—';
+        els.wasmQueueMetrics.textContent =
+          'Очередь: ' + cur + '/' + total + ' фрагм. (до ' + state.maxChunkChars + ' симв.) • Синтез: ' +
+          genStr + ' • Буфер в ОЗУ: ' + n.readyCache.size + '/2';
+      }
+
+      function unlockNeuralAudio() {
+        try {
+          const AC = window.AudioContext || window.webkitAudioContext;
+          if (!state.neural.audioCtx && AC) {
+            state.neural.audioCtx = new AC();
+          }
+          if (state.neural.audioCtx && state.neural.audioCtx.state === 'suspended') {
+            state.neural.audioCtx.resume();
+          }
+        } catch (_) {}
+      }
+
+      function encodeWavFromFloat32(samples, sampleRate) {
+        const numSamples = samples.length;
+        const buffer = new ArrayBuffer(44 + numSamples * 2);
+        const view = new DataView(buffer);
+        function writeStr(offset, str) {
+          for (let i = 0; i < str.length; i++) view.setUint8(offset + i, str.charCodeAt(i));
+        }
+        writeStr(0, 'RIFF');
+        view.setUint32(4, 36 + numSamples * 2, true);
+        writeStr(8, 'WAVE');
+        writeStr(12, 'fmt ');
+        view.setUint32(16, 16, true);
+        view.setUint16(20, 1, true);
+        view.setUint16(22, 1, true);
+        view.setUint32(24, sampleRate, true);
+        view.setUint32(28, sampleRate * 2, true);
+        view.setUint16(32, 2, true);
+        view.setUint16(34, 16, true);
+        writeStr(36, 'data');
+        view.setUint32(40, numSamples * 2, true);
+
+        let offset = 44;
+        for (let i = 0; i < numSamples; i++) {
+          const s = Math.max(-1, Math.min(1, samples[i]));
+          view.setInt16(offset, s < 0 ? s * 0x8000 : s * 0x7FFF, true);
+          offset += 2;
+        }
+        return new Blob([buffer], { type: 'audio/wav' });
+      }
+
+      function revokeNeuralCacheEntry(chunkIdx) {
+        const entry = state.neural.readyCache.get(chunkIdx);
+        if (entry) {
+          if (entry.wavUrl) {
+            try { URL.revokeObjectURL(entry.wavUrl); } catch (_) {}
+          }
+          entry.samples = null;
+          state.neural.readyCache.delete(chunkIdx);
+        }
+      }
+
+      function clearAllNeuralBuffers() {
+        Array.from(state.neural.readyCache.keys()).forEach(revokeNeuralCacheEntry);
+        state.neural.readyCache.clear();
+        state.neural.webAudioCurrentSamples = null;
+        updateWasmQueueMetricsUI();
+      }
+
+      function stopNeuralAudioPlaybackOnly() {
+        if (state.neural.highlightTimer) {
+          clearInterval(state.neural.highlightTimer);
+          state.neural.highlightTimer = null;
+        }
+        if (els.neuralAudioPlayer) {
+          try {
+            els.neuralAudioPlayer.onended = null;
+            els.neuralAudioPlayer.onerror = null;
+            els.neuralAudioPlayer.pause();
+            els.neuralAudioPlayer.removeAttribute('src');
+            els.neuralAudioPlayer.load();
+          } catch (_) {}
+        }
+        if (state.neural.activeSourceNode) {
+          try {
+            state.neural.activeSourceNode.onended = null;
+            state.neural.activeSourceNode.stop();
+            state.neural.activeSourceNode.disconnect();
+          } catch (_) {}
+          state.neural.activeSourceNode = null;
+        }
+        state.neural.usingWebAudioFallback = false;
+        state.neural.webAudioPauseOffset = 0;
+      }
+
+      async function probeWasmModelMeta() {
+        const metaCandidates = [['./model-meta', '.json'].join(''), ['./tts-test/model-meta', '.json'].join('')];
+        for (let i = 0; i < metaCandidates.length; i++) {
+          try {
+            const resp = await fetch(metaCandidates[i], { cache: 'no-store' });
+            if (resp.ok) {
+              const ct = (resp.headers.get('Content-Type') || '').toLowerCase();
+              if (ct.includes('text/html')) continue;
+              const meta = await resp.json();
+              if (meta && meta.totalBytes) {
+                state.neural.totalBytes = Number(meta.totalBytes);
+                state.neural.voiceName = meta.voice || state.neural.voiceName;
+                if (els.wasmModelSizeBadge) {
+                  els.wasmModelSizeBadge.textContent = formatMegabytes(state.neural.totalBytes) + ' (' + state.neural.voiceName + ')';
+                }
+                return;
+              }
+            }
+          } catch (_) {}
+        }
+      }
+
+      function createInlineMockWorker() {
+        const inlineSrc = `
+          'use strict';
+          let mockDelay = 35;
+          self.onmessage = function (e) {
+            const data = e.data || {};
+            if (data.type === 'init') {
+              self.postMessage({
+                type: 'ready',
+                sampleRate: 22050,
+                numSpeakers: 1,
+                initTimeMs: 10,
+                mockMode: true
+              });
+            } else if (data.type === 'setMockDelay') {
+              mockDelay = Number(data.delayMs) || 35;
+            } else if (data.type === 'generate') {
+              const t0 = performance.now();
+              const delay = Number(data.mockDelayMs) || mockDelay;
+              setTimeout(function () {
+                const sr = 22050;
+                const speed = Math.max(0.5, Math.min(2.0, Number(data.speed) || 1.0));
+                const clean = String(data.text || '').trim();
+                const durationSec = clean ? Math.min(4.0, Math.max(0.18, (clean.length * 0.015) / speed)) : 0;
+                const numSamples = Math.floor(sr * durationSec);
+                const samples = new Float32Array(numSamples);
+                for (let i = 0; i < numSamples; i++) {
+                  const t = i / sr;
+                  const syl = Math.sin(2 * Math.PI * (3.2 * speed) * t);
+                  const env = syl > -0.2 ? Math.min(1, (syl + 0.2) * 1.5) : 0.05;
+                  const f0 = 140 + 20 * Math.sin(2 * Math.PI * 1.2 * t);
+                  const wave = 0.5 * Math.sin(2 * Math.PI * f0 * t) + 0.25 * Math.sin(2 * Math.PI * (f0 * 2) * t);
+                  const fade = Math.min(1, i / 200, (numSamples - i) / 300);
+                  samples[i] = wave * env * fade * 0.35;
+                }
+                self.postMessage({
+                  type: 'result',
+                  sessionId: data.sessionId,
+                  chunkIndex: data.chunkIndex,
+                  requestId: data.requestId,
+                  speed: speed,
+                  samples: samples,
+                  sampleRate: sr,
+                  elapsedMs: performance.now() - t0
+                }, [samples.buffer]);
+              }, delay);
+            }
+          };
+        `;
+        const blob = new Blob([inlineSrc], { type: 'application/javascript' });
+        return new Worker(URL.createObjectURL(blob));
+      }
+
+      function ensureNeuralWorkerCreated(preferInlineMock) {
+        if (state.neural.worker && Boolean(preferInlineMock) === Boolean(state.neural.worker._isInlineMock)) {
+          return state.neural.worker;
+        }
+        if (state.neural.worker) {
+          try { state.neural.worker.terminate(); } catch (_) {}
+          state.neural.worker = null;
+        }
+        let w;
+        if (preferInlineMock) {
+          w = createInlineMockWorker();
+          w._isInlineMock = true;
+        } else {
+          const workerUrl = ['./tts-worker', '.js'].join('');
+          w = new Worker(workerUrl);
+          w._isInlineMock = false;
+        }
+        w.onmessage = handleNeuralWorkerMessage;
+        w.onerror = function (err) {
+          state.neural.workerBusy = false;
+          if (state.neural.modelState !== 'ready') {
+            state.neural.modelState = 'error';
+            if (els.loadWasmModelBtn) {
+              els.loadWasmModelBtn.disabled = false;
+              els.loadWasmModelBtn.textContent = 'Повторить загрузку модели';
+            }
+          }
+          showWasmError(
+            'Критическая ошибка Web Worker нейросетевой озвучки (возможно, нехватка ОЗУ в Safari или отсутствует tts-worker.js).',
+            err.message || ''
+          );
+          updateSpeechStatusUI();
+        };
+        state.neural.worker = w;
+        return w;
+      }
+
+      function initNeuralModel(options) {
+        const opts = options || {};
+        hideWasmError();
+        unlockNeuralAudio();
+
+        if (state.neural.modelState === 'ready' && Boolean(opts.mockMode) === state.neural.isMockMode) {
+          return;
+        }
+        if (state.neural.modelState === 'loading' && !opts.mockMode) {
+          return;
+        }
+
+        const hasWasm = typeof WebAssembly === 'object' && typeof WebAssembly.instantiate === 'function';
+        const hasWorker = typeof Worker === 'function';
+        if (!hasWasm || !hasWorker) {
+          showWasmError('Ваш браузер не поддерживает WebAssembly или Web Workers.');
+          return;
+        }
+
+        state.neural.modelState = 'loading';
+        if (els.loadWasmModelBtn) {
+          els.loadWasmModelBtn.disabled = true;
+          els.loadWasmModelBtn.textContent = 'Загрузка...';
+        }
+        if (els.wasmProgressWrap) els.wasmProgressWrap.classList.remove('hidden');
+        if (els.wasmProgressBar) els.wasmProgressBar.style.width = '4%';
+        if (els.wasmModelStatus) {
+          els.wasmModelStatus.textContent = opts.mockMode
+            ? 'Инициализация тестового контура очереди в Web Worker...'
+            : 'Запуск Web Worker и проверка файлов модели Sherpa-ONNX WASM...';
+        }
+        updateSpeechStatusUI();
+
+        try {
+          const worker = ensureNeuralWorkerCreated(Boolean(opts.mockMode));
+          worker.postMessage({ type: 'init', mockMode: Boolean(opts.mockMode) });
+        } catch (err) {
+          state.neural.modelState = 'error';
+          if (els.loadWasmModelBtn) {
+            els.loadWasmModelBtn.disabled = false;
+            els.loadWasmModelBtn.textContent = 'Повторить загрузку модели';
+          }
+          showWasmError('Не удалось создать Web Worker (./tts-worker.js).', err.message || String(err));
+        }
+      }
+
+      function handleNeuralWorkerMessage(e) {
+        const msg = e.data || {};
+        const n = state.neural;
+
+        if (msg.type === 'progress') {
+          const pct = msg.total > 0 ? Math.min(100, Math.round((msg.loaded / msg.total) * 100)) : 15;
+          if (els.wasmProgressWrap) els.wasmProgressWrap.classList.remove('hidden');
+          if (els.wasmProgressBar) els.wasmProgressBar.style.width = Math.max(4, pct) + '%';
+          if (msg.total > 0 && els.wasmModelSizeBadge) {
+            els.wasmModelSizeBadge.textContent = formatMegabytes(msg.total);
+          }
+          if (els.wasmModelStatus) {
+            els.wasmModelStatus.textContent = (msg.label || 'Загрузка модели') + ': ' +
+              formatMegabytes(msg.loaded) + (msg.total > 0 ? (' из ' + formatMegabytes(msg.total) + ' (' + pct + '%)') : '');
+          }
+        } else if (msg.type === 'status') {
+          if (els.wasmModelStatus) els.wasmModelStatus.textContent = msg.text;
+        } else if (msg.type === 'ready') {
+          n.modelState = 'ready';
+          n.isMockMode = Boolean(msg.mockMode);
+          n.sampleRate = msg.sampleRate || 22050;
+          n.numSpeakers = msg.numSpeakers || 1;
+
+          if (els.wasmProgressBar) els.wasmProgressBar.style.width = '100%';
+          if (els.loadWasmModelBtn) {
+            els.loadWasmModelBtn.disabled = n.isMockMode ? false : true;
+            els.loadWasmModelBtn.textContent = n.isMockMode ? 'Загрузить реальную модель' : 'Модель готова';
+          }
+          if (els.wasmModelStatus) {
+            els.wasmModelStatus.textContent = n.isMockMode
+              ? 'Включён тестовый контур очереди в Web Worker (' + n.sampleRate + ' Гц). Готов к проверке длинных текстов.'
+              : 'Нейросетевая модель загружена в память сеанса (' + n.sampleRate + ' Гц, инициализация ' + ((msg.initTimeMs || 0) / 1000).toFixed(2) + ' с).';
+          }
+          updateSpeechStatusUI();
+
+          if (n.pendingStartWordIdx !== null && n.pendingSessionId === state.speechSessionId) {
+            const startWord = n.pendingStartWordIdx;
+            n.pendingStartWordIdx = null;
+            n.pendingSessionId = null;
+            startReadingFromIndex(startWord);
+          }
+        } else if (msg.type === 'result') {
+          n.workerBusy = false;
+          n.synthesizingChunkPos = null;
+
+          // Защита от гонок: игнорируем запоздавший ответ старой сессии или старой скорости
+          if (msg.sessionId !== state.speechSessionId || !state.isSpeaking) {
+            if (state.isSpeaking && state.ttsEngine === 'sherpa-wasm') {
+              pumpNeuralQueue(state.speechSessionId);
+            }
+            return;
+          }
+
+          if (typeof msg.speed === 'number' && Math.abs(msg.speed - state.rate) > 0.04 && msg.chunkIndex > n.currentChunkPos) {
+            // Этот предвыбранный фрагмент синтезировался со старой скоростью до её изменения пользователем
+            pumpNeuralQueue(state.speechSessionId);
+            return;
+          }
+
+          const samples = msg.samples;
+          const sr = msg.sampleRate || n.sampleRate || 22050;
+          const elapsedMs = msg.elapsedMs || 0;
+          const durSec = (samples && samples.length > 0) ? (samples.length / sr) : 0;
+
+          n.lastElapsedMs = elapsedMs;
+          n.lastDurationSec = durSec;
+          n.lastRtf = durSec > 0 ? ((elapsedMs / 1000) / durSec) : 0;
+
+          if (!samples || samples.length === 0) {
+            n.readyCache.set(msg.chunkIndex, {
+              empty: true,
+              wavUrl: null,
+              samples: null,
+              sampleRate: sr,
+              durationSec: 0,
+              elapsedMs: elapsedMs
+            });
+          } else {
+            const wavBlob = encodeWavFromFloat32(samples, sr);
+            const wavUrl = URL.createObjectURL(wavBlob);
+            n.readyCache.set(msg.chunkIndex, {
+              empty: false,
+              wavUrl: wavUrl,
+              samples: samples,
+              sampleRate: sr,
+              durationSec: durSec,
+              elapsedMs: elapsedMs
+            });
+          }
+
+          updateWasmQueueMetricsUI();
+          pumpNeuralQueue(state.speechSessionId);
+        } else if (msg.type === 'error') {
+          n.workerBusy = false;
+          n.synthesizingChunkPos = null;
+
+          if (msg.sessionId !== undefined && msg.sessionId !== state.speechSessionId) {
+            if (state.isSpeaking && state.ttsEngine === 'sherpa-wasm') {
+              pumpNeuralQueue(state.speechSessionId);
+            }
+            return;
+          }
+
+          if (n.modelState !== 'ready') {
+            n.modelState = 'error';
+            n.pendingStartWordIdx = null;
+            n.pendingSessionId = null;
+            if (els.loadWasmModelBtn) {
+              els.loadWasmModelBtn.disabled = false;
+              els.loadWasmModelBtn.textContent = 'Повторить загрузку модели';
+            }
+            if (els.wasmModelStatus) {
+              els.wasmModelStatus.textContent = 'Ошибка загрузки модели. Проверьте публикацию WASM-артефактов или включите «Тест очереди».';
+            }
+          }
+
+          if (state.isSpeaking) {
+            stopSpeech(true);
+          }
+          showWasmError(msg.message || 'Ошибка нейросетевого синтеза WASM', msg.details || '');
+          showAlert((msg.message || 'Ошибка нейросетевого синтеза') + (msg.details ? (' ' + msg.details) : ''), 'error');
+        }
+      }
+
+      function pumpNeuralQueue(sessionId) {
+        if (sessionId !== state.speechSessionId || !state.isSpeaking || state.ttsEngine !== 'sherpa-wasm') return;
+        const n = state.neural;
+
+        // 1. Освобождаем все отыгранные буферы (< currentChunkPos), чтобы держать в памяти не более 2 фрагментов
+        Array.from(n.readyCache.keys()).forEach(function (idx) {
+          if (idx < n.currentChunkPos || idx > n.currentChunkPos + 1) {
+            revokeNeuralCacheEntry(idx);
+          }
+        });
+        updateWasmQueueMetricsUI();
+
+        // 2. Если мы ждём готовности текущего фрагмента и не на паузе — запускаем его воспроизведение
+        if (n.waitingForCurrentChunk && !state.isPaused && n.readyCache.has(n.currentChunkPos)) {
+          n.waitingForCurrentChunk = false;
+          playNeuralChunk(n.currentChunkPos, sessionId);
+        }
+
+        // 3. Если Worker свободен, отправляем ровно 1 задание (сначала текущий фрагмент, иначе предвыборка следующего +1)
+        if (!n.workerBusy && n.modelState === 'ready' && n.worker) {
+          let targetIdx = null;
+          if (n.currentChunkPos < n.chunks.length && !n.readyCache.has(n.currentChunkPos)) {
+            targetIdx = n.currentChunkPos;
+          } else if (n.currentChunkPos + 1 < n.chunks.length && !n.readyCache.has(n.currentChunkPos + 1)) {
+            targetIdx = n.currentChunkPos + 1;
+          }
+
+          if (targetIdx !== null) {
+            const targetChunk = n.chunks[targetIdx];
+            n.workerBusy = true;
+            n.synthesizingChunkPos = targetIdx;
+            const reqId = ++n.requestSeq;
+            n.activeRequestId = reqId;
+            updateSpeechStatusUI();
+            updateWasmQueueMetricsUI();
+
+            n.worker.postMessage({
+              type: 'generate',
+              text: targetChunk.text,
+              sid: 0,
+              speed: state.rate,
+              sessionId: sessionId,
+              chunkIndex: targetIdx,
+              requestId: reqId
+            });
+          }
+        }
+      }
+
+      function getCurrentNeuralPlaybackSec() {
+        const n = state.neural;
+        if (n.usingWebAudioFallback && n.audioCtx) {
+          if (state.isPaused) return n.webAudioPauseOffset;
+          return Math.max(0, n.audioCtx.currentTime - n.webAudioStartTime);
+        }
+        return (els.neuralAudioPlayer && Number.isFinite(els.neuralAudioPlayer.currentTime))
+          ? els.neuralAudioPlayer.currentTime
+          : 0;
+      }
+
+      function startNeuralWordHighlightLoop(chunk, durationSec, sessionId) {
+        if (state.neural.highlightTimer) {
+          clearInterval(state.neural.highlightTimer);
+          state.neural.highlightTimer = null;
+        }
+        if (!chunk || !chunk.charMap || chunk.charMap.length === 0) return;
+
+        highlightTokenRange(chunk.charMap[0].tokenStartIdx, chunk.charMap[0].tokenEndIdx, { scroll: true });
+
+        const totalChars = Math.max(1, chunk.text.length);
+        state.neural.highlightTimer = setInterval(function () {
+          if (sessionId !== state.speechSessionId || !state.isSpeaking || state.isPaused) return;
+          const curSec = getCurrentNeuralPlaybackSec();
+          const ratio = durationSec > 0 ? Math.min(0.999, Math.max(0, curSec / durationSec)) : 0;
+          const charOffset = Math.floor(ratio * totalChars);
+
+          for (let i = chunk.charMap.length - 1; i >= 0; i--) {
+            if (charOffset >= chunk.charMap[i].charStart) {
+              if (state.currentWordIndex !== chunk.charMap[i].tokenStartIdx) {
+                highlightTokenRange(chunk.charMap[i].tokenStartIdx, chunk.charMap[i].tokenEndIdx, { scroll: true });
+              }
+              break;
+            }
+          }
+        }, 75);
+      }
+
+      function advanceToNextNeuralChunk(finishedChunkPos, sessionId) {
+        if (sessionId !== state.speechSessionId || !state.isSpeaking) return;
+        const n = state.neural;
+
+        if (n.highlightTimer) {
+          clearInterval(n.highlightTimer);
+          n.highlightTimer = null;
+        }
+
+        // Немедленно освобождаем память отыгранного фрагмента
+        revokeNeuralCacheEntry(finishedChunkPos);
+        updateWasmQueueMetricsUI();
+
+        const nextPos = finishedChunkPos + 1;
+        if (nextPos < n.chunks.length) {
+          n.currentChunkPos = nextPos;
+          const nextChunk = n.chunks[nextPos];
+          if (nextChunk) {
+            highlightTokenRange(nextChunk.startWordIdx, nextChunk.startWordIdx, { scroll: true });
+          }
+
+          if (n.readyCache.has(nextPos) && !state.isPaused) {
+            n.waitingForCurrentChunk = false;
+            playNeuralChunk(nextPos, sessionId);
+            pumpNeuralQueue(sessionId);
+          } else {
+            n.waitingForCurrentChunk = true;
+            updateSpeechStatusUI();
+            pumpNeuralQueue(sessionId);
+          }
+        } else {
+          onPageReadingFinished(sessionId);
+        }
+      }
+
+      function playWebAudioFallbackBuffer(samples, sampleRate, offsetSec, chunkPos, chunk, durationSec, sessionId) {
+        const n = state.neural;
+        if (!n.audioCtx || !samples) return false;
+        try {
+          if (n.activeSourceNode) {
+            try {
+              n.activeSourceNode.onended = null;
+              n.activeSourceNode.stop();
+              n.activeSourceNode.disconnect();
+            } catch (_) {}
+          }
+          const audioBuffer = n.audioCtx.createBuffer(1, samples.length, sampleRate);
+          audioBuffer.getChannelData(0).set(samples);
+          const source = n.audioCtx.createBufferSource();
+          source.buffer = audioBuffer;
+          source.connect(n.audioCtx.destination);
+
+          n.usingWebAudioFallback = true;
+          n.webAudioCurrentSamples = samples;
+          n.webAudioCurrentSr = sampleRate;
+          n.webAudioStartTime = n.audioCtx.currentTime - (offsetSec || 0);
+          n.activeSourceNode = source;
+
+          source.onended = function () {
+            if (sessionId !== state.speechSessionId || !state.isSpeaking || state.isPaused) return;
+            n.activeSourceNode = null;
+            advanceToNextNeuralChunk(chunkPos, sessionId);
+          };
+
+          startNeuralWordHighlightLoop(chunk, durationSec, sessionId);
+          updateSpeechStatusUI();
+          source.start(0, Math.max(0, Math.min(offsetSec || 0, Math.max(0, durationSec - 0.01))));
+          return true;
+        } catch (err) {
+          return false;
+        }
+      }
+
+      async function playNeuralChunk(chunkPos, sessionId) {
+        if (sessionId !== state.speechSessionId || !state.isSpeaking) return;
+        const n = state.neural;
+        const entry = n.readyCache.get(chunkPos);
+        const chunk = n.chunks[chunkPos];
+
+        if (!chunk || !entry) {
+          n.waitingForCurrentChunk = true;
+          updateSpeechStatusUI();
+          pumpNeuralQueue(sessionId);
+          return;
+        }
+
+        if (entry.empty || !entry.wavUrl) {
+          advanceToNextNeuralChunk(chunkPos, sessionId);
+          return;
+        }
+
+        n.usingWebAudioFallback = false;
+        n.webAudioPauseOffset = 0;
+        n.webAudioCurrentSamples = entry.samples;
+        n.webAudioCurrentSr = entry.sampleRate;
+
+        const player = els.neuralAudioPlayer;
+        player.onended = function () {
+          if (sessionId !== state.speechSessionId || !state.isSpeaking || state.isPaused) return;
+          advanceToNextNeuralChunk(chunkPos, sessionId);
+        };
+        player.onerror = function () {
+          if (sessionId !== state.speechSessionId || !state.isSpeaking) return;
+          const ok = playWebAudioFallbackBuffer(entry.samples, entry.sampleRate, 0, chunkPos, chunk, entry.durationSec, sessionId);
+          if (!ok) {
+            showWasmError('Не удалось воспроизвести аудио-буфер в Safari.');
+            stopSpeech(true);
+          }
+        };
+
+        player.src = entry.wavUrl;
+        player.currentTime = 0;
+        startNeuralWordHighlightLoop(chunk, entry.durationSec, sessionId);
+        updateSpeechStatusUI();
+        updateWasmQueueMetricsUI();
+
+        try {
+          await player.play();
+        } catch (playErr) {
+          if (sessionId !== state.speechSessionId || !state.isSpeaking) return;
+          const ok = playWebAudioFallbackBuffer(entry.samples, entry.sampleRate, 0, chunkPos, chunk, entry.durationSec, sessionId);
+          if (!ok) {
+            showWasmError('Автовоспроизведение заблокировано Safari. Нажмите кнопку «Читать» ещё раз.', playErr.message || String(playErr));
+            stopSpeech(true);
+          }
+        }
+      }
+
+      function startNeuralReadingFromIndex(safeIdx, sessionId) {
+        const n = state.neural;
+        unlockNeuralAudio();
+        hideWasmError();
+
+        if (n.modelState !== 'ready') {
+          n.pendingStartWordIdx = safeIdx;
+          n.pendingSessionId = sessionId;
+          updateSpeechStatusUI();
+          initNeuralModel({ mockMode: n.isMockMode });
+          return;
+        }
+
+        const chunks = ChunkQueueBuilder.buildChunksFromWordIndex(state.words, state.phrases, safeIdx, {
+          maxChunkChars: state.maxChunkChars,
+          smartPronunciation: state.smartPronunciation,
+          customDict: state.customDict
+        });
+
+        if (chunks.length === 0) {
+          stopSpeech(true);
+          showAlert('Не удалось сформировать очередь фрагментов для синтеза на этой странице.', 'warning');
+          return;
+        }
+
+        n.chunks = chunks;
+        n.currentChunkPos = 0;
+        n.waitingForCurrentChunk = true;
+        clearAllNeuralBuffers();
+        updateSpeechStatusUI();
+        updateWasmQueueMetricsUI();
+        pumpNeuralQueue(sessionId);
+      }
+
+      function createConfiguredUtterance(text) {
+        const utterance = new SpeechSynthesisUtterance(text);
+        const voiceCfg = getSelectedVoiceConfig();
+        if (voiceCfg.voice) utterance.voice = voiceCfg.voice;
+        utterance.lang = voiceCfg.lang || 'ru-RU';
+        utterance.rate = voiceCfg.rate;
+        utterance.pitch = voiceCfg.pitch;
+        return { utterance, voiceCfg };
+      }
+
+      function stopSpeech(resetHighlightToSelected) {
+        state.speechSessionId++;
+        if (state.sliderRestartDebounceTimer) { clearTimeout(state.sliderRestartDebounceTimer); state.sliderRestartDebounceTimer = null; }
+        if (state.fallbackTimer) { clearInterval(state.fallbackTimer); state.fallbackTimer = null; }
+        if (synthSupported) {
+          try { window.speechSynthesis.cancel(); } catch (e) {}
+        }
+        if (state.activeUtterance) {
+          state.activeUtterance.onstart = state.activeUtterance.onboundary = state.activeUtterance.onend = state.activeUtterance.onerror = null;
+          state.activeUtterance = null;
+        }
+        stopNeuralAudioPlaybackOnly();
+        clearAllNeuralBuffers();
+        state.neural.chunks = [];
+        state.neural.currentChunkPos = 0;
+        state.neural.waitingForCurrentChunk = false;
+        state.neural.pendingStartWordIdx = null;
+        state.neural.pendingSessionId = null;
+        updateWasmQueueMetricsUI();
+
+        state.isSpeaking = false;
+        state.isPaused = false;
+        state.usingApproxHighlight = false;
+
+        if (resetHighlightToSelected && state.words.length > 0) highlightWord(state.currentWordIndex, false);
+        else clearWordHighlights();
+        saveDocumentProgress(true);
+        updateSpeechStatusUI();
+      }
+
+      function onWordClicked(wordIdx) {
+        hideAlert();
+        els.resumeBanner.classList.add('hidden');
+        stopSpeech(false);
+        state.currentWordIndex = wordIdx;
+        startReadingFromIndex(wordIdx);
+      }
+
+      function startReadingFromIndex(startIndex) {
+        if (state.ttsEngine === 'web-speech' && !synthSupported) {
+          showAlert('Синтез речи (speechSynthesis) не поддерживается в этом браузере. Используйте режим Sherpa-ONNX WASM.', 'error');
+          return;
+        }
+        if (state.words.length === 0) {
+          showAlert('На текущей странице нет текста для озвучивания. Пожалуйста, выберите PDF-файл или нажмите «Демо-текст».', 'warning');
+          return;
+        }
+        hideAlert();
+        stopSpeech(false);
+
+        const safeIdx = Math.max(0, Math.min(startIndex, state.words.length - 1));
+        state.currentWordIndex = safeIdx;
+        state.isSpeaking = true;
+        state.isPaused = false;
+        state.usingApproxHighlight = false;
+        const sessionId = ++state.speechSessionId;
+
+        highlightWord(safeIdx, true);
+        if (state.ttsEngine === 'sherpa-wasm') {
+          startNeuralReadingFromIndex(safeIdx, sessionId);
+        } else {
+          if (state.smoothReading) speakPhraseStartingAtWord(safeIdx, sessionId);
+          else speakSingleWordLoop(safeIdx, sessionId);
+        }
+      }
+
+      function speakPhraseStartingAtWord(wordIdx, sessionId) {
+        if (sessionId !== state.speechSessionId || !state.isSpeaking) return;
+        if (wordIdx >= state.words.length) { onPageReadingFinished(sessionId); return; }
+
+        const startWord = state.words[wordIdx];
+        const phrase = state.phrases[startWord.phraseIdx];
+        if (!phrase) { onPageReadingFinished(sessionId); return; }
+
+        const sliceWords = state.words.slice(wordIdx, phrase.endWordIdx + 1);
+        const prepared = TextNormalizer.buildSpokenSegmentWithMap(sliceWords, {
+          smartPronunciation: state.smartPronunciation,
+          customDict: state.customDict
+        });
+        const utteranceText = prepared.utteranceText;
+        const charMap = prepared.charMap;
+
+        if (!utteranceText.trim() || charMap.length === 0) {
+          const nextIdx = phrase.endWordIdx + 1;
+          if (nextIdx < state.words.length) speakPhraseStartingAtWord(nextIdx, sessionId);
+          else onPageReadingFinished(sessionId);
+          return;
+        }
+
+        const { utterance, voiceCfg } = createConfiguredUtterance(utteranceText);
+        state.activeUtterance = utterance;
+        let lastBoundaryAt = 0;
+        let boundaryEventsCount = 0;
+
+        const highlightByCharOffset = (charIdx) => {
+          for (let i = charMap.length - 1; i >= 0; i--) {
+            if (charIdx >= charMap[i].charStart) {
+              highlightTokenRange(charMap[i].tokenStartIdx, charMap[i].tokenEndIdx, { scroll: true });
+              break;
+            }
+          }
+        };
+
+        const startFallbackWordTracker = () => {
+          if (state.fallbackTimer) clearInterval(state.fallbackTimer);
+          const totalChars = Math.max(1, utteranceText.length);
+          const charsPerSec = 13.2 * (voiceCfg.rate || state.rate || 1.0);
+          const startedAt = performance.now();
+          let pausedAccumMs = 0;
+          let lastPauseStart = null;
+
+          state.fallbackTimer = setInterval(() => {
+            if (sessionId !== state.speechSessionId || !state.isSpeaking) {
+              clearInterval(state.fallbackTimer);
+              state.fallbackTimer = null;
+              return;
+            }
+            if (state.isPaused) {
+              if (!lastPauseStart) lastPauseStart = performance.now();
+              return;
+            } else if (lastPauseStart) {
+              pausedAccumMs += performance.now() - lastPauseStart;
+              lastPauseStart = null;
+            }
+
+            const now = performance.now();
+            if (boundaryEventsCount >= 2 && (now - lastBoundaryAt) < 1300) {
+              if (state.usingApproxHighlight) { state.usingApproxHighlight = false; updateSpeechStatusUI(); }
+              return;
+            }
+            if (!state.usingApproxHighlight) { state.usingApproxHighlight = true; updateSpeechStatusUI(); }
+            const elapsedSec = (now - startedAt - pausedAccumMs) / 1000;
+            highlightByCharOffset(Math.min(totalChars - 1, Math.floor(elapsedSec * charsPerSec)));
+          }, 120);
+        };
+
+        utterance.onstart = () => {
+          if (sessionId !== state.speechSessionId) return;
+          highlightTokenRange(charMap[0].tokenStartIdx, charMap[0].tokenEndIdx, { scroll: true });
+          startFallbackWordTracker();
+        };
+
+        utterance.onboundary = (event) => {
+          if (sessionId !== state.speechSessionId || !state.isSpeaking) return;
+          if (event.name && event.name !== 'word' && event.name !== 'sentence') return;
+          if (typeof event.charIndex !== 'number' || event.charIndex < 0) return;
+          lastBoundaryAt = performance.now();
+          boundaryEventsCount++;
+          state.usingApproxHighlight = false;
+          highlightByCharOffset(Math.min(event.charIndex, utteranceText.length - 1));
+        };
+
+        utterance.onend = () => {
+          if (sessionId !== state.speechSessionId) return;
+          if (state.fallbackTimer) { clearInterval(state.fallbackTimer); state.fallbackTimer = null; }
+          if (!state.isSpeaking || state.isPaused) return;
+          const nextWordIdx = phrase.endWordIdx + 1;
+          if (nextWordIdx < state.words.length) speakPhraseStartingAtWord(nextWordIdx, sessionId);
+          else onPageReadingFinished(sessionId);
+        };
+
+        utterance.onerror = (event) => {
+          if (sessionId !== state.speechSessionId) return;
+          if (state.fallbackTimer) { clearInterval(state.fallbackTimer); state.fallbackTimer = null; }
+          if (!event || event.error === 'canceled' || event.error === 'interrupted') return;
+          state.isSpeaking = false;
+          state.isPaused = false;
+          state.usingApproxHighlight = false;
+          updateSpeechStatusUI();
+          showAlert('Ошибка синтеза речи (' + (event.error || 'неизвестно') + '). Попробуйте выбрать другой системный голос.', 'warning');
+        };
+
+        try {
+          window.speechSynthesis.speak(utterance);
+        } catch (err) {
+          stopSpeech(true);
+          showAlert('Не удалось запустить синтез речи. Проверьте настройки звука.', 'error');
+        }
+      }
+
+      function speakSingleWordLoop(wordIdx, sessionId) {
+        if (sessionId !== state.speechSessionId || !state.isSpeaking) return;
+        if (wordIdx >= state.words.length) { onPageReadingFinished(sessionId); return; }
+
+        const wordObj = state.words[wordIdx];
+        const prepared = TextNormalizer.buildSpokenSegmentWithMap([wordObj], {
+          smartPronunciation: state.smartPronunciation,
+          customDict: state.customDict
+        });
+        const cleanWord = prepared.utteranceText.replace(/^[^\p{L}\p{N}]+|[^\p{L}\p{N}]+$/gu, '') || wordObj.text;
+        const { utterance } = createConfiguredUtterance(cleanWord);
+        state.activeUtterance = utterance;
+
+        highlightTokenRange(wordIdx, wordIdx, { scroll: true });
+        utterance.onend = () => {
+          if (sessionId !== state.speechSessionId || !state.isSpeaking || state.isPaused) return;
+          if (wordIdx + 1 < state.words.length) speakSingleWordLoop(wordIdx + 1, sessionId);
+          else onPageReadingFinished(sessionId);
+        };
+        utterance.onerror = (event) => {
+          if (sessionId !== state.speechSessionId || !event || event.error === 'canceled' || event.error === 'interrupted') return;
+          state.isSpeaking = false;
+          updateSpeechStatusUI();
+        };
+        window.speechSynthesis.speak(utterance);
+      }
+
+      async function onPageReadingFinished(sessionId) {
+        if (sessionId !== state.speechSessionId) return;
+        stopSpeech(false);
+        state.currentWordIndex = 0;
+        saveDocumentProgress(true);
+
+        if (state.continuousReading && state.currentPage < state.totalPages) {
+          let nextPage = state.currentPage + 1;
+          while (nextPage <= state.totalPages) {
+            const loadedOk = await goToPage(nextPage, false);
+            if (!loadedOk) return;
+            if (state.words.length > 0) {
+              showToast('Переход на страницу ' + nextPage);
+              startReadingFromIndex(0);
+              return;
+            }
+            nextPage++;
+          }
+          showToast('Достигнут конец документа');
+        } else {
+          showToast('Чтение страницы завершено');
+          if (state.words.length > 0) highlightWord(0, false);
+        }
+      }
+
+      function togglePauseResume() {
+        if (!state.isSpeaking) return;
+        const n = state.neural;
+
+        if (state.ttsEngine === 'sherpa-wasm') {
+          if (!state.isPaused) {
+            state.isPaused = true;
+            if (!n.waitingForCurrentChunk) {
+              if (n.usingWebAudioFallback && n.audioCtx) {
+                n.webAudioPauseOffset = Math.max(0, n.audioCtx.currentTime - n.webAudioStartTime);
+                if (n.activeSourceNode) {
+                  try {
+                    n.activeSourceNode.onended = null;
+                    n.activeSourceNode.stop();
+                    n.activeSourceNode.disconnect();
+                  } catch (_) {}
+                  n.activeSourceNode = null;
+                }
+              } else if (els.neuralAudioPlayer) {
+                try { els.neuralAudioPlayer.pause(); } catch (_) {}
+              }
+            }
+            saveDocumentProgress(true);
+            updateSpeechStatusUI();
+          } else {
+            unlockNeuralAudio();
+            state.isPaused = false;
+            updateSpeechStatusUI();
+
+            if (n.waitingForCurrentChunk) {
+              pumpNeuralQueue(state.speechSessionId);
+            } else if (n.usingWebAudioFallback && n.webAudioCurrentSamples) {
+              const chunk = n.chunks[n.currentChunkPos];
+              const entry = n.readyCache.get(n.currentChunkPos);
+              const dur = entry ? entry.durationSec : (n.webAudioCurrentSamples.length / n.webAudioCurrentSr);
+              playWebAudioFallbackBuffer(
+                n.webAudioCurrentSamples,
+                n.webAudioCurrentSr,
+                n.webAudioPauseOffset,
+                n.currentChunkPos,
+                chunk,
+                dur,
+                state.speechSessionId
+              );
+              pumpNeuralQueue(state.speechSessionId);
+            } else if (els.neuralAudioPlayer && els.neuralAudioPlayer.src) {
+              els.neuralAudioPlayer.play().catch(function () {
+                const entry = n.readyCache.get(n.currentChunkPos);
+                const chunk = n.chunks[n.currentChunkPos];
+                if (entry && entry.samples) {
+                  playWebAudioFallbackBuffer(
+                    entry.samples,
+                    entry.sampleRate,
+                    els.neuralAudioPlayer.currentTime || 0,
+                    n.currentChunkPos,
+                    chunk,
+                    entry.durationSec,
+                    state.speechSessionId
+                  );
+                }
+              });
+              pumpNeuralQueue(state.speechSessionId);
+            } else {
+              n.waitingForCurrentChunk = true;
+              pumpNeuralQueue(state.speechSessionId);
+            }
+          }
+          return;
+        }
+
+        if (!state.isPaused) {
+          state.isPaused = true;
+          if (synthSupported) { try { window.speechSynthesis.pause(); } catch (e) {} }
+          saveDocumentProgress(true);
+          updateSpeechStatusUI();
+        } else {
+          startReadingFromIndex(state.currentWordIndex);
+        }
+      }
+
+      function testSelectedVoice() {
+        if (!synthSupported) {
+          showAlert('Ваш браузер не поддерживает озвучивание текста.', 'error');
+          return;
+        }
+        stopSpeech(true);
+        const { utterance, voiceCfg } = createConfiguredUtterance(UNIFORM_VOICE_TEST_TEXT);
+        window.speechSynthesis.speak(utterance);
+        showToast('Тест голоса: ' + voiceCfg.voiceName);
+      }
+
+      function scheduleSpeechRestartIfSpeaking() {
+        if (!state.isSpeaking) return;
+        if (state.ttsEngine === 'sherpa-wasm') {
+          // В режиме Sherpa-ONNX WASM сбрасываем предвыбранные будущие буферы,
+          // чтобы следующие фрагменты очереди синтезировались уже с новой скоростью без прерывания текущей фразы
+          const n = state.neural;
+          Array.from(n.readyCache.keys()).forEach(function (idx) {
+            if (idx > n.currentChunkPos) {
+              revokeNeuralCacheEntry(idx);
+            }
+          });
+          updateWasmQueueMetricsUI();
+          if (!state.isPaused) {
+            pumpNeuralQueue(state.speechSessionId);
+          }
+          return;
+        }
+        if (state.isPaused) return;
+        if (state.sliderRestartDebounceTimer) clearTimeout(state.sliderRestartDebounceTimer);
+        const resumeIdx = state.currentWordIndex;
+        state.sliderRestartDebounceTimer = setTimeout(() => {
+          state.sliderRestartDebounceTimer = null;
+          if (state.isSpeaking && !state.isPaused) startReadingFromIndex(resumeIdx);
+        }, 280);
+      }
+
+      // =========================================================================
+      // МОДУЛЬ 9. ЗАГРУЗКА PDF И НАВИГАЦИЯ С ЗАЩИТОЙ ОТ АСИНХРОННЫХ ГОНОК
+      // =========================================================================
+      async function initDocumentViewAndResume(resumePrefix) {
+        els.fileNameDisplay.textContent = state.fileName;
+        els.fileNameDisplay.title = state.fileName;
+        els.totalPagesLabel.textContent = String(state.totalPages);
+        els.pageNumberInput.max = String(state.totalPages);
+        els.pageNumberInput.disabled = false;
+        els.goToPageBtn.disabled = false;
+
+        const savedProgress = getSavedDocumentProgress(state.fileKey);
+        if (savedProgress && typeof savedProgress.page === 'number' && savedProgress.page >= 1 && savedProgress.page <= state.totalPages && (savedProgress.page > 1 || (savedProgress.wordIndex && savedProgress.wordIndex > 0))) {
+          await goToPage(savedProgress.page, false);
+          const savedWord = Math.min(savedProgress.wordIndex || 0, Math.max(0, state.words.length - 1));
+          state.currentWordIndex = savedWord;
+          highlightWord(savedWord, true);
+          els.resumeBannerText.textContent = resumePrefix + ' (стр. ' + savedProgress.page + ', слово ' + (savedWord + 1) + '). Продолжить?';
+          els.resumeBanner.classList.remove('hidden');
+        } else {
+          await goToPage(1, false);
+        }
+      }
+
+      async function handleFileSelected(file) {
+        if (!file) {
+          showAlert('Файл не выбран. Пожалуйста, выберите документ в формате PDF.', 'warning');
+          return;
+        }
+        if (file.type !== 'application/pdf' && !/\.pdf$/i.test(file.name || '')) {
+          showAlert('Выбранный файл не является PDF-документом. Пожалуйста, выберите файл с расширением .pdf.', 'error');
+          return;
+        }
+        stopSpeech(false);
+        hideAlert();
+        els.passwordModal.classList.add('hidden');
+        els.resumeBanner.classList.add('hidden');
+
+        try {
+          const arrayBuffer = await file.arrayBuffer();
+          state.pendingFileBuffer = arrayBuffer.slice(0);
+          state.fileName = file.name;
+          state.fileKey = file.name + '_' + file.size;
+          state.isDemoDoc = false;
+          await openPdfFromBuffer(arrayBuffer, '');
+        } catch (err) {
+          showAlert('Не удалось прочитать выбранный файл с устройства. Проверьте целостность файла.', 'error');
+        }
+      }
+
+      async function openPdfFromBuffer(arrayBuffer, password) {
+        if (!window.pdfjsLib) {
+          showAlert('Библиотека PDF.js ещё не загрузилась. Проверьте подключение к интернету и обновите страницу.', 'error');
+          return;
+        }
+        try {
+          const loadingTask = window.pdfjsLib.getDocument({ data: new Uint8Array(arrayBuffer), password: password || undefined });
+          const pdfDoc = await loadingTask.promise;
+          state.pdfDoc = pdfDoc;
+          state.totalPages = pdfDoc.numPages;
+          els.passwordModal.classList.add('hidden');
+          els.pdfPasswordInput.value = '';
+          await initDocumentViewAndResume('Вы уже читали «' + state.fileName + '»');
+        } catch (err) {
+          if (err && (err.name === 'PasswordException' || /password/i.test(err.message || ''))) {
+            els.passwordModal.classList.remove('hidden');
+            els.passwordModalHint.textContent = err.code === 2
+              ? 'Неверный пароль. Пожалуйста, попробуйте ещё раз:'
+              : 'Этот PDF-файл защищён паролем. Введите пароль для доступа к тексту:';
+            els.pdfPasswordInput.focus();
+            return;
+          }
+          showAlert('Ошибка открытия PDF: файл повреждён или имеет неподдерживаемый формат.', 'error');
+        }
+      }
+
+      async function loadDemoDocument() {
+        stopSpeech(false);
+        hideAlert();
+        els.passwordModal.classList.add('hidden');
+        els.resumeBanner.classList.add('hidden');
+        state.pdfDoc = null;
+        state.isDemoDoc = true;
+        state.fileName = 'Демо-документ «Учебный практикум и проверка речи».pdf';
+        state.fileKey = 'builtin_demo_document_v2';
+        state.totalPages = DEMO_PAGES.length;
+        await initDocumentViewAndResume('Найдена сохранённая позиция');
+        showToast('Демо-документ открыт');
+      }
+
+      async function goToPage(pageNum, resetSavedWord) {
+        if (state.totalPages === 0) return false;
+        const targetPage = Math.max(1, Math.min(pageNum, state.totalPages));
+        const requestId = ++state.pageLoadRequestId;
+
+        stopSpeech(false);
+        state.currentPage = targetPage;
+        if (resetSavedWord !== false) state.currentWordIndex = 0;
+
+        els.pageNumberInput.value = String(targetPage);
+        els.prevPageBtn.disabled = targetPage <= 1;
+        els.nextPageBtn.disabled = targetPage >= state.totalPages;
+
+        if (state.isDemoDoc) {
+          const demoText = DEMO_PAGES[targetPage - 1] || '';
+          const demoParas = demoText.split(/\n\s*\n+/).map((p) => p.trim()).filter(Boolean);
+          renderPageParagraphsToDOM(demoParas, demoText);
+          if (state.words.length > 0) highlightWord(state.currentWordIndex, false);
+          saveDocumentProgress(true);
+          return true;
+        }
+
+        if (!state.pdfDoc) return false;
+        try {
+          const page = await state.pdfDoc.getPage(targetPage);
+          if (requestId !== state.pageLoadRequestId) return false;
+          const textContent = await page.getTextContent();
+          if (requestId !== state.pageLoadRequestId) return false;
+
+          const paragraphs = PdfStructureExtractor.reconstructParagraphsFromItems(textContent.items || []);
+          renderPageParagraphsToDOM(paragraphs, paragraphs.join('\n\n'));
+
+          if (state.words.length === 0) {
+            showAlert('На странице ' + targetPage + ' не обнаружено текстового слоя (возможно, это скан или изображение без OCR).', 'warning');
+          } else {
+            hideAlert();
+            highlightWord(state.currentWordIndex, false);
+          }
+          saveDocumentProgress(true);
+          return true;
+        } catch (err) {
+          if (requestId !== state.pageLoadRequestId) return false;
+          showAlert('Не удалось извлечь текст со страницы ' + targetPage + '.', 'error');
+          return false;
+        }
+      }
+
+      // =========================================================================
+      // МОДУЛЬ 10. ПОИСК, ЭКСПОРТ И КОНТРОЛЬНАЯ ПРОВЕРКА 10 ПРИМЕРОВ
+      // =========================================================================
+      function performSearchOnPage(query, jumpToFirst) {
+        state.words.forEach((w) => { if (w.el) w.el.classList.remove('search-match', 'search-current'); });
+        state.searchMatches = [];
+        state.searchCurrentPos = -1;
+
+        const cleanQuery = (query || '').trim().toLowerCase();
+        if (!cleanQuery || state.words.length === 0) {
+          els.searchCountLabel.textContent = '0/0';
+          return;
+        }
+        state.words.forEach((w) => {
+          if (w.text.toLowerCase().includes(cleanQuery)) {
+            state.searchMatches.push(w.index);
+            if (w.el) w.el.classList.add('search-match');
+          }
+        });
+        if (state.searchMatches.length === 0) {
+          els.searchCountLabel.textContent = '0/0';
+          return;
+        }
+        state.searchCurrentPos = 0;
+        updateActiveSearchMatch(jumpToFirst !== false);
+      }
+
+      function updateActiveSearchMatch(scroll) {
+        state.words.forEach((w) => { if (w.el) w.el.classList.remove('search-current'); });
+        if (state.searchMatches.length === 0 || state.searchCurrentPos < 0) {
+          els.searchCountLabel.textContent = '0/0';
+          return;
+        }
+        const wordObj = state.words[state.searchMatches[state.searchCurrentPos]];
+        if (wordObj && wordObj.el) {
+          wordObj.el.classList.add('search-current');
+          if (scroll && els.readerScrollContainer) {
+            const container = els.readerScrollContainer;
+            const offsetInside = (wordObj.el.getBoundingClientRect().top - container.getBoundingClientRect().top) + container.scrollTop;
+            container.scrollTo({ top: Math.max(0, offsetInside - container.clientHeight / 2), behavior: 'smooth' });
+          }
+        }
+        els.searchCountLabel.textContent = (state.searchCurrentPos + 1) + '/' + state.searchMatches.length;
+      }
+
+      async function copyCurrentPageText() {
+        if (!state.pageRawText.trim()) {
+          showAlert('На текущей странице нет текста для копирования.', 'warning');
+          return;
+        }
+        try {
+          if (navigator.clipboard && navigator.clipboard.writeText) await navigator.clipboard.writeText(state.pageRawText);
+          else throw new Error('Fallback copy');
+          showToast('Исходный текст страницы скопирован в буфер обмена');
+        } catch (err) {
+          const textarea = document.createElement('textarea');
+          textarea.value = state.pageRawText;
+          textarea.style.position = 'fixed';
+          textarea.style.opacity = '0';
+          document.body.appendChild(textarea);
+          textarea.select();
+          try { document.execCommand('copy'); showToast('Исходный текст страницы скопирован'); }
+          catch (e) { showAlert('Не удалось скопировать текст автоматически.', 'error'); }
+          document.body.removeChild(textarea);
+        }
+      }
+
+      function downloadCurrentPageText() {
+        if (!state.pageRawText.trim()) {
+          showAlert('На текущей странице нет текста для скачивания.', 'warning');
+          return;
+        }
+        const downloadName = (state.fileName || 'document').replace(/\.pdf$/i, '') + '_стр_' + state.currentPage + '.txt';
+        const url = URL.createObjectURL(new Blob([state.pageRawText], { type: 'text/plain;charset=utf-8' }));
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = downloadName;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        setTimeout(() => URL.revokeObjectURL(url), 1500);
+        showToast('Файл ' + downloadName + ' сохранён');
+      }
+
+      function runVerificationSuite() {
+        const testDict = Object.assign({ 'берет книгу': 'берёт книгу', 'ч. т. д.': 'что и требовалось доказать' }, state.customDict);
+        const examples = [
+          { id: 1, title: 'Сокращения в начале и середине', text: 'См. рис. 2. Далее описана структура органа.' },
+          { id: 2, title: 'Инициалы и год', text: 'А. С. Пушкин родился в 1799 г.' },
+          { id: 3, title: 'Числа с единицами измерения', text: 'Пациент получил 1 мг, затем 2 мг и 5 мг препарата.' },
+          { id: 4, title: 'Десятичная дробь и диапазон', text: 'Значение составило 3,5%. Диапазон — 5–10 мг.' },
+          { id: 5, title: 'Омографы «берет» (сохранение/словарь)', text: 'Он носит берет. Он берет книгу.' },
+          { id: 6, title: 'Омограф «узнает» (без ложной замены)', text: 'Завтра он узнает результат. Она узнает его по голосу.' },
+          { id: 7, title: 'Римские цифры в контексте главы', text: 'В главе IV описаны изменения. В IV главе приведена таблица.' },
+          { id: 8, title: 'Длинное предложение (>24 слов без разрыва)', text: 'Это длинное предложение более чем из двадцати четырёх слов специально составлено для проверки того, что алгоритм сегментации не разрезает фразу принудительно на двенадцатом или двадцать четвёртом слове.' },
+          { id: 9, title: 'Многословное пользовательское правило', text: 'Теорема полностью доказана, ч. т. д.' },
+          { id: 10, title: 'Тире и раскрытое сокращение (диапазоны)', text: 'Температура кипения — см. табл. 1 — зависит от давления.' }
+        ];
+
+        const results = examples.map((ex) => {
+          const rawTokens = ex.text.split(/\s+/).filter(Boolean).map((t, idx) => ({ text: t, index: idx }));
+          const segments = SentenceSegmenter.segmentParagraphTokens(rawTokens, 55);
+          const segmentDetails = segments.map((seg) => {
+            const built = TextNormalizer.buildSpokenSegmentWithMap(seg, { smartPronunciation: true, customDict: testDict });
+            const mappingSummary = built.charMap.map((m) =>
+              '[' + m.tokenStartIdx + (m.tokenEndIdx > m.tokenStartIdx ? '..' + m.tokenEndIdx : '') + ']:«' + m.spoken + '»(@' + m.charStart + '-' + m.charEnd + ')'
+            ).join(' ');
+            return { original: seg.map((t) => t.text).join(' '), spoken: built.utteranceText, mappingSummary: mappingSummary };
+          });
+          return { id: ex.id, title: ex.title, input: ex.text, segmentCount: segments.length, segments: segmentDetails };
+        });
+
+        if (els.selfTestResultsContainer) {
+          els.selfTestResultsContainer.textContent = '';
+          results.forEach((res) => {
+            const card = document.createElement('div');
+            card.className = 'p-2.5 rounded-xl bg-slate-900/90 border border-slate-800 space-y-1';
+            const addLine = (cls, text) => {
+              const d = document.createElement('div');
+              d.className = cls;
+              d.textContent = text;
+              card.appendChild(d);
+            };
+            addLine('font-semibold text-sky-300', res.id + '. ' + res.title + ' (сегментов: ' + res.segmentCount + ')');
+            res.segments.forEach((seg, sIdx) => {
+              addLine('text-slate-300', 'Сегмент ' + (sIdx + 1) + ' [исх.]: ' + seg.original);
+              addLine('text-emerald-300', 'Сегмент ' + (sIdx + 1) + ' [речь]: ' + seg.spoken);
+              addLine('text-[11px] text-slate-400 font-mono break-all', 'Карта токенов: ' + seg.mappingSummary);
+            });
+            els.selfTestResultsContainer.appendChild(card);
+          });
+        }
+        return results;
+      }
+
+      if (typeof window !== 'undefined') {
+        window.__PDFReaderTestAPI = {
+          TextNormalizer: TextNormalizer,
+          SentenceSegmenter: SentenceSegmenter,
+          PdfStructureExtractor: PdfStructureExtractor,
+          ChunkQueueBuilder: ChunkQueueBuilder,
+          runVerificationSuite: runVerificationSuite,
+          getState: function () { return state; },
+          initNeuralModel: initNeuralModel,
+          startReadingFromIndex: startReadingFromIndex,
+          togglePauseResume: togglePauseResume,
+          stopSpeech: stopSpeech,
+          loadCustomParagraphsForTest: function (paras, title) {
+            stopSpeech(false);
+            state.isDemoDoc = true;
+            state.fileName = title || 'Тестовый документ.pdf';
+            state.fileKey = 'test_doc_' + Date.now();
+            state.totalPages = 1;
+            state.currentPage = 1;
+            renderPageParagraphsToDOM(paras, paras.join('\n\n'));
+          }
+        };
+      }
+
+      // =========================================================================
+      // ПРИВЯЗКА ОБРАБОТЧИКОВ СОБЫТИЙ
+      // =========================================================================
+      function bindEvents() {
+        const triggerFileDialog = () => els.pdfFileInput.click();
+        els.selectPdfBtn.addEventListener('click', triggerFileDialog);
+        els.emptyStateSelectBtn.addEventListener('click', triggerFileDialog);
+        els.pdfFileInput.addEventListener('change', (e) => {
+          const file = e.target.files && e.target.files[0];
+          if (file) handleFileSelected(file);
+          els.pdfFileInput.value = '';
+        });
+
+        els.loadDemoBtn.addEventListener('click', loadDemoDocument);
+        els.emptyStateDemoBtn.addEventListener('click', loadDemoDocument);
+        els.closeAlertBtn.addEventListener('click', hideAlert);
+
+        els.readerTextContainer.addEventListener('click', (e) => {
+          const target = e.target && e.target.closest ? e.target.closest('.reader-word') : null;
+          if (!target) return;
+          const idx = parseInt(target.dataset.index, 10);
+          if (!isNaN(idx)) onWordClicked(idx);
+        });
+
+        els.confirmResumeBtn.addEventListener('click', () => {
+          els.resumeBanner.classList.add('hidden');
+          startReadingFromIndex(state.currentWordIndex);
+        });
+        els.dismissResumeBtn.addEventListener('click', async () => {
+          els.resumeBanner.classList.add('hidden');
+          await goToPage(1, true);
+          showToast('Чтение с начала документа');
+        });
+
+        els.submitPasswordBtn.addEventListener('click', () => {
+          if (state.pendingFileBuffer) openPdfFromBuffer(state.pendingFileBuffer.slice(0), els.pdfPasswordInput.value);
+        });
+        els.pdfPasswordInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') els.submitPasswordBtn.click(); });
+        els.cancelPasswordBtn.addEventListener('click', () => {
+          els.passwordModal.classList.add('hidden');
+          els.pdfPasswordInput.value = '';
+        });
+
+        els.playCurrentBtn.addEventListener('click', () => {
+          els.resumeBanner.classList.add('hidden');
+          if (state.isSpeaking && state.isPaused) togglePauseResume();
+          else startReadingFromIndex(state.currentWordIndex);
+        });
+        els.playFromStartBtn.addEventListener('click', () => {
+          els.resumeBanner.classList.add('hidden');
+          startReadingFromIndex(0);
+        });
+        els.pauseResumeBtn.addEventListener('click', togglePauseResume);
+        els.stopBtn.addEventListener('click', () => { stopSpeech(true); showToast('Озвучивание остановлено'); });
+        els.testVoiceBtn.addEventListener('click', testSelectedVoice);
+
+        els.voiceSelect.addEventListener('change', () => {
+          state.selectedVoiceURI = els.voiceSelect.value;
+          saveGlobalSettings();
+          scheduleSpeechRestartIfSpeaking();
+        });
+
+        if (els.readingPresetSelect) {
+          els.readingPresetSelect.addEventListener('change', () => {
+            const presetKey = els.readingPresetSelect.value;
+            const preset = READING_STYLE_PRESETS[presetKey];
+            if (!preset) return;
+            state.readingPreset = presetKey;
+            if (typeof preset.rate === 'number') state.rate = preset.rate;
+            if (typeof preset.pitch === 'number') state.pitch = preset.pitch;
+            applySettingsToUI();
+            saveGlobalSettings();
+            scheduleSpeechRestartIfSpeaking();
+          });
+        }
+
+        const setRateValue = (newRate, triggerRestart) => {
+          state.rate = Math.round(Math.max(0.5, Math.min(2.0, newRate)) * 10) / 10;
+          state.readingPreset = 'neutral';
+          applySettingsToUI();
+          saveGlobalSettings();
+          if (triggerRestart) scheduleSpeechRestartIfSpeaking();
+        };
+        els.rateRange.addEventListener('input', () => {
+          const val = parseFloat(els.rateRange.value);
+          if (!isNaN(val)) els.rateValueLabel.textContent = val.toFixed(1) + 'x';
+        });
+        els.rateRange.addEventListener('change', () => setRateValue(parseFloat(els.rateRange.value), true));
+        els.rateDecBtn.addEventListener('click', () => setRateValue(state.rate - 0.1, true));
+        els.rateIncBtn.addEventListener('click', () => setRateValue(state.rate + 0.1, true));
+
+        const setPitchValue = (newPitch, triggerRestart) => {
+          state.pitch = Math.round(Math.max(0.7, Math.min(1.3, newPitch)) * 20) / 20;
+          state.readingPreset = 'neutral';
+          applySettingsToUI();
+          saveGlobalSettings();
+          if (triggerRestart) scheduleSpeechRestartIfSpeaking();
+        };
+        els.pitchRange.addEventListener('input', () => {
+          const val = parseFloat(els.pitchRange.value);
+          if (!isNaN(val)) els.pitchValueLabel.textContent = val.toFixed(2);
+        });
+        els.pitchRange.addEventListener('change', () => setPitchValue(parseFloat(els.pitchRange.value), true));
+        els.pitchDecBtn.addEventListener('click', () => setPitchValue(state.pitch - 0.05, true));
+        els.pitchIncBtn.addEventListener('click', () => setPitchValue(state.pitch + 0.05, true));
+
+        const updateFontSize = (newSize) => {
+          state.fontSize = Math.max(14, Math.min(34, Math.round(newSize)));
+          applySettingsToUI();
+          saveGlobalSettings();
+        };
+        els.fontSizeRange.addEventListener('input', () => updateFontSize(parseInt(els.fontSizeRange.value, 10)));
+        els.fontDecBtn.addEventListener('click', () => updateFontSize(state.fontSize - 2));
+        els.fontIncBtn.addEventListener('click', () => updateFontSize(state.fontSize + 2));
+
+        els.smoothReadingToggle.addEventListener('change', () => {
+          state.smoothReading = els.smoothReadingToggle.checked;
+          saveGlobalSettings();
+          scheduleSpeechRestartIfSpeaking();
+        });
+        els.smartPronunciationToggle.addEventListener('change', () => {
+          state.smartPronunciation = els.smartPronunciationToggle.checked;
+          saveGlobalSettings();
+          scheduleSpeechRestartIfSpeaking();
+          showToast(state.smartPronunciation ? 'Подготовка текста для речи включена' : 'Подготовка текста для речи отключена');
+        });
+        els.continuousReadingToggle.addEventListener('change', () => {
+          state.continuousReading = els.continuousReadingToggle.checked;
+          saveGlobalSettings();
+        });
+        els.autoScrollToggle.addEventListener('change', () => {
+          state.autoScroll = els.autoScrollToggle.checked;
+          saveGlobalSettings();
+        });
+        els.nightModeBtn.addEventListener('click', () => {
+          state.nightComfort = !state.nightComfort;
+          applySettingsToUI();
+          saveGlobalSettings();
+          showToast(state.nightComfort ? 'Включён тёплый ночной режим' : 'Включён стандартный тёмный режим');
+        });
+
+        els.toggleDictModalBtn.addEventListener('click', () => els.pronunciationDictPanel.classList.toggle('hidden'));
+        if (els.previewDictRuleBtn) {
+          els.previewDictRuleBtn.addEventListener('click', () => {
+            if (!synthSupported) return;
+            const toSpoken = (els.customDictToInput.value || els.customDictFromInput.value || '').trim();
+            if (!toSpoken) {
+              showAlert('Введите вариант произношения в поле «Текст для синтезатора» для прослушивания.', 'warning');
+              return;
+            }
+            stopSpeech(true);
+            const { utterance } = createConfiguredUtterance(toSpoken);
+            window.speechSynthesis.speak(utterance);
+            showToast('Прослушивание замены: «' + toSpoken + '»');
+          });
+        }
+
+        els.addCustomDictRuleBtn.addEventListener('click', () => {
+          const fromWord = (els.customDictFromInput.value || '').trim().toLowerCase().replace(/\s+/g, ' ');
+          const toSpoken = (els.customDictToInput.value || '').trim().replace(/\s+/g, ' ');
+          if (!fromWord || !toSpoken) {
+            showAlert('Укажите исходное слово/фразу и вариант произношения.', 'warning');
+            return;
+          }
+          state.customDict[fromWord] = toSpoken;
+          els.customDictFromInput.value = '';
+          els.customDictToInput.value = '';
+          saveGlobalSettings();
+          renderCustomDictTags();
+          showToast('Добавлено правило: «' + fromWord + '» → «' + toSpoken + '»');
+        });
+
+        if (els.toggleSelfTestBtn) {
+          els.toggleSelfTestBtn.addEventListener('click', () => {
+            els.selfTestPanel.classList.toggle('hidden');
+            if (!els.selfTestPanel.classList.contains('hidden')) runVerificationSuite();
+          });
+        }
+        if (els.runSelfTestBtn) {
+          els.runSelfTestBtn.addEventListener('click', () => { runVerificationSuite(); showToast('Контрольные примеры пересчитаны'); });
+        }
+
+        els.prevPageBtn.addEventListener('click', () => { if (state.currentPage > 1) goToPage(state.currentPage - 1, true); });
+        els.nextPageBtn.addEventListener('click', () => { if (state.currentPage < state.totalPages) goToPage(state.currentPage + 1, true); });
+
+        const handlePageJump = () => {
+          const val = parseInt(els.pageNumberInput.value, 10);
+          if (isNaN(val) || val < 1 || val > state.totalPages) {
+            showAlert('Введите номер страницы от 1 до ' + state.totalPages + '.', 'warning');
+            els.pageNumberInput.value = String(state.currentPage);
+            return;
+          }
+          goToPage(val, true);
+        };
+        els.goToPageBtn.addEventListener('click', handlePageJump);
+        els.pageNumberInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') handlePageJump(); });
+
+        els.searchInput.addEventListener('input', () => performSearchOnPage(els.searchInput.value, true));
+        els.searchNextBtn.addEventListener('click', () => {
+          if (state.searchMatches.length === 0) return;
+          state.searchCurrentPos = (state.searchCurrentPos + 1) % state.searchMatches.length;
+          updateActiveSearchMatch(true);
+        });
+        els.searchPrevBtn.addEventListener('click', () => {
+          if (state.searchMatches.length === 0) return;
+          state.searchCurrentPos = (state.searchCurrentPos - 1 + state.searchMatches.length) % state.searchMatches.length;
+          updateActiveSearchMatch(true);
+        });
+        els.searchClearBtn.addEventListener('click', () => { els.searchInput.value = ''; performSearchOnPage('', false); });
+
+        els.copyPageTextBtn.addEventListener('click', copyCurrentPageText);
+        els.downloadPageTextBtn.addEventListener('click', downloadCurrentPageText);
+
+        window.addEventListener('dragover', (e) => e.preventDefault());
+        window.addEventListener('drop', (e) => {
+          e.preventDefault();
+          const file = e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files[0];
+          if (file) handleFileSelected(file);
+        });
+
+        const flushAndCancelOnLeave = () => {
+          saveDocumentProgress(true);
+          if (synthSupported) { try { window.speechSynthesis.cancel(); } catch (e) {} }
+        };
+        window.addEventListener('pagehide', flushAndCancelOnLeave);
+        window.addEventListener('beforeunload', flushAndCancelOnLeave);
+
+        if (els.ttsEngineSelect) {
+          els.ttsEngineSelect.addEventListener('change', () => {
+            const wasSpeaking = state.isSpeaking;
+            const resumeWord = state.currentWordIndex;
+            stopSpeech(true);
+            state.ttsEngine = els.ttsEngineSelect.value === 'web-speech' ? 'web-speech' : 'sherpa-wasm';
+            saveGlobalSettings();
+            showToast(state.ttsEngine === 'sherpa-wasm' ? 'Выбран нейросетевой движок Sherpa-ONNX WASM' : 'Выбран системный голос браузера');
+            if (wasSpeaking && state.words.length > 0) {
+              startReadingFromIndex(resumeWord);
+            }
+          });
+        }
+
+        if (els.loadWasmModelBtn) {
+          els.loadWasmModelBtn.addEventListener('click', () => {
+            initNeuralModel({ mockMode: false });
+          });
+        }
+
+        if (els.loadMockWasmBtn) {
+          els.loadMockWasmBtn.addEventListener('click', () => {
+            state.ttsEngine = 'sherpa-wasm';
+            if (els.ttsEngineSelect) els.ttsEngineSelect.value = 'sherpa-wasm';
+            initNeuralModel({ mockMode: true });
+            showToast('Включён тестовый контур очереди Sherpa-ONNX в Web Worker');
+          });
+        }
+
+        if (els.chunkSizeInput) {
+          const updateChunkLimit = () => {
+            const val = parseInt(els.chunkSizeInput.value, 10);
+            if (!isNaN(val)) {
+              state.maxChunkChars = Math.max(150, Math.min(800, val));
+              els.chunkSizeInput.value = String(state.maxChunkChars);
+              saveGlobalSettings();
+              updateWasmQueueMetricsUI();
+            }
+          };
+          els.chunkSizeInput.addEventListener('change', updateChunkLimit);
+        }
+
+        if (els.closeWasmErrorBtn) {
+          els.closeWasmErrorBtn.addEventListener('click', hideWasmError);
+        }
+      }
+
+      function init() {
+        loadGlobalSettings();
+        bindEvents();
+        populateVoices();
+        if (synthSupported && 'onvoiceschanged' in window.speechSynthesis) {
+          window.speechSynthesis.onvoiceschanged = populateVoices;
+        }
+        setTimeout(populateVoices, 400);
+        setTimeout(populateVoices, 1200);
+        probeWasmModelMeta();
+        updateWasmQueueMetricsUI();
+      }
+
+      init();
+    })();
+  </script>
+</body>
+</html>
