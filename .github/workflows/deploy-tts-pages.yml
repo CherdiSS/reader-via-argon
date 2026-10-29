@@ -84,6 +84,8 @@ jobs:
       - name: 6. Сборка однопоточного WASM SIMD TTS (build-wasm-simd-tts.sh)
         run: |
           cd sherpa-onnx
+          cat wasm/tts/assets/README.md
+          cat wasm/tts/CMakeLists.txt 
           ./build-wasm-simd-tts.sh
           ls -lh build-wasm-simd-tts/install/bin/wasm/tts/
 
