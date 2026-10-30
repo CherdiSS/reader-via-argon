@@ -20,6 +20,7 @@ on:
     paths:
       - 'index.html'
       - 'tts-worker.js'
+      - 'phonemize-worker.js'
       - '.github/workflows/deploy-tts-pages.yml'
 
 permissions:
@@ -77,7 +78,7 @@ jobs:
           fi
           mv "$ONNX_FILE" ./model.onnx
           mv "${MODEL_NAME}/tokens.txt" ./
-          mv "${MODEL_NAME}/espeak-ng-data" ./
+          # espeak-ng-data не нужен: sherpa-onnx >= 2.0 его игнорирует, фонемизацию делает piper-phonemize
           rm -rf "${MODEL_NAME}"
           ls -lh
       - name: Подготовка piper-phonemize для WASM
@@ -114,6 +115,18 @@ jobs:
             cp "$WASM_OUT/sherpa-onnx-wasm-main.data" site/sherpa-onnx-wasm-main-tts.data
             cp "$WASM_OUT/sherpa-onnx.js" site/sherpa-onnx-tts.js
           fi
+
+          # Фонемизатор (espeak-ng в WASM) для phonemize-worker.js
+          if [ ! -f "$WASM_OUT/piper-phonemize/piper-phonemize-wasm-main.js" ]; then
+            echo "piper-phonemize bundle not found in $WASM_OUT" >&2
+            exit 1
+          fi
+          mkdir -p site/piper-phonemize
+          cp "$WASM_OUT"/piper-phonemize/piper-phonemize.js \
+             "$WASM_OUT"/piper-phonemize/piper-phonemize-wasm-main.js \
+             "$WASM_OUT"/piper-phonemize/piper-phonemize-wasm-main.wasm \
+             "$WASM_OUT"/piper-phonemize/piper-phonemize-wasm-main.data \
+             site/piper-phonemize/
 
           WASM_SIZE=$(stat -c%s "site/sherpa-onnx-wasm-main-tts.wasm")
           DATA_SIZE=$(stat -c%s "site/sherpa-onnx-wasm-main-tts.data")

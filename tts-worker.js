@@ -7,6 +7,70 @@ let isMockMode = false;
 let blobUrls = {};
 let initStartTime = 0;
 
+// sherpa-onnx >= 2.0 не содержит espeak-ng: для VITS-Piper без лексикона
+// generate({ text }) падает с "phoneme_codepoints is empty, no lexicon, and no
+// frontend available". Текст фонемизируется piper-phonemize во вложенном воркере
+// и передаётся в generateWithConfig как phonemeCodepoints.
+let phonemizer = null;
+let phonemizeSeq = 0;
+const pendingPhonemize = {};
+
+function startPhonemizer(prefix) {
+  return new Promise(function (resolve, reject) {
+    if (typeof Worker !== 'function') {
+      reject(new Error('Браузер не поддерживает вложенные Web Workers, нужные для piper-phonemize.'));
+      return;
+    }
+    const w = new Worker((prefix || './') + 'phonemize-worker.js');
+    w.onmessage = function (e) {
+      const msg = e.data || {};
+      if (msg.type === 'ready') {
+        phonemizer = w;
+        resolve();
+      } else if (msg.type === 'init-error') {
+        w.terminate();
+        reject(new Error(msg.message));
+      } else if (msg.type === 'result') {
+        const p = pendingPhonemize[msg.id];
+        if (!p) return;
+        delete pendingPhonemize[msg.id];
+        if (msg.error) p.reject(new Error(msg.error));
+        else p.resolve(msg.sentences);
+      }
+    };
+    w.onerror = function (ev) {
+      ev.preventDefault();
+      w.terminate();
+      reject(new Error('Ошибка воркера piper-phonemize: ' + (ev.message || 'неизвестная ошибка')));
+    };
+    w.postMessage({ type: 'init', base: prefix || './' });
+  });
+}
+
+function phonemize(text, voice) {
+  return new Promise(function (resolve, reject) {
+    const id = ++phonemizeSeq;
+    pendingPhonemize[id] = { resolve: resolve, reject: reject };
+    phonemizer.postMessage({ type: 'phonemize', id: id, text: text, voice: voice });
+  });
+}
+
+function synthesizeNeural(text, sid, speed) {
+  // tts.lang — espeak-голос из метаданных модели Piper ("ru" для ru_RU-*).
+  return phonemize(String(text || ''), tts.lang || 'ru').then(function (sentences) {
+    // C API требует, чтобы каждое предложение было непустым.
+    const phonemeCodepoints = sentences.filter(function (s) { return s.length > 0; });
+    if (phonemeCodepoints.length === 0) {
+      return { samples: new Float32Array(0), sampleRate: tts.sampleRate || 22050 };
+    }
+    const audio = tts.generateWithConfig('', { phonemeCodepoints: phonemeCodepoints, sid: sid, speed: speed });
+    if (!audio || !audio.sampleRate) {
+      throw new Error('sherpa-onnx не смог синтезировать фрагмент (подробности в консоли воркера).');
+    }
+    return audio;
+  });
+}
+
 async function fetchWithProgress(url, label, mimeType, progressOffset, totalExpected) {
   const response = await fetch(url, { cache: 'default' });
   if (!response.ok) {
@@ -183,6 +247,9 @@ async function initEngine(options) {
   try {
     initStartTime = performance.now();
     const names = await resolveArtifactNames();
+    // Фонемизатор загружается параллельно с моделью; ошибка обрабатывается в onRuntimeInitialized.
+    const phonemizerReady = startPhonemizer(names.prefix);
+    phonemizerReady.catch(function () {});
 
     let totalBytes = 0;
     try {
@@ -237,20 +304,32 @@ async function initEngine(options) {
       },
       onRuntimeInitialized: function () {
         try {
-          tts = createOfflineTts(self.Module);
-          isInitializing = false;
+          const engine = createOfflineTts(self.Module);
 
           Object.keys(blobUrls).forEach(function (k) {
             URL.revokeObjectURL(blobUrls[k]);
           });
           blobUrls = {};
 
-          self.postMessage({
-            type: 'ready',
-            sampleRate: tts.sampleRate || 22050,
-            numSpeakers: tts.numSpeakers || 1,
-            initTimeMs: performance.now() - initStartTime,
-            mockMode: false
+          self.postMessage({ type: 'status', text: 'Ожидание фонемизатора piper-phonemize (espeak-ng)...' });
+          phonemizerReady.then(function () {
+            tts = engine;
+            isInitializing = false;
+            self.postMessage({
+              type: 'ready',
+              sampleRate: tts.sampleRate || 22050,
+              numSpeakers: tts.numSpeakers || 1,
+              initTimeMs: performance.now() - initStartTime,
+              mockMode: false
+            });
+          }, function (phErr) {
+            isInitializing = false;
+            self.postMessage({
+              type: 'error',
+              code: 'INIT_FAILED',
+              message: 'Не удалось загрузить фонемизатор piper-phonemize для нейросетевой модели.',
+              details: phErr.message || String(phErr)
+            });
           });
         } catch (initErr) {
           isInitializing = false;
@@ -303,13 +382,15 @@ self.onmessage = function (e) {
       const t0 = performance.now();
       const delayMs = isMockMode ? Math.min(180, Math.max(25, Number(data.mockDelayMs) || 35)) : 0;
 
-      const finishGeneration = function () {
-        try {
-          const audio = tts.generate({
-            text: data.text,
-            sid: data.sid || 0,
-            speed: data.speed || 1.0
-          });
+      const synthesis = isMockMode
+        ? new Promise(function (resolve) {
+            setTimeout(function () {
+              resolve(tts.generate({ text: data.text, sid: data.sid || 0, speed: data.speed || 1.0 }));
+            }, delayMs);
+          })
+        : synthesizeNeural(data.text, data.sid || 0, data.speed || 1.0);
+
+      synthesis.then(function (audio) {
           const elapsedMs = performance.now() - t0;
           const rawSamples = (audio && audio.samples) ? audio.samples : new Float32Array(0);
           const samplesCopy = new Float32Array(rawSamples);
@@ -327,7 +408,7 @@ self.onmessage = function (e) {
             },
             [samplesCopy.buffer]
           );
-        } catch (innerErr) {
+      }).catch(function (innerErr) {
           self.postMessage({
             type: 'error',
             code: 'GENERATE_FAILED',
@@ -337,14 +418,7 @@ self.onmessage = function (e) {
             message: 'Ошибка во время нейросетевого синтеза фрагмента.',
             details: innerErr.message || String(innerErr)
           });
-        }
-      };
-
-      if (delayMs > 0) {
-        setTimeout(finishGeneration, delayMs);
-      } else {
-        finishGeneration();
-      }
+      });
     } catch (genErr) {
       self.postMessage({
         type: 'error',
